@@ -85,13 +85,16 @@ export class mapPCF implements ComponentFramework.ReactControl<IInputs, IOutputs
     }
 
     public getOutputs(): IOutputs {
+        // Always return concrete (non-undefined) values. Canvas treats undefined
+        // outputs as "blank" and its change-detection often fails to raise OnChange
+        // on transitions into/out of blank, which suppresses the event entirely.
         return {
-            selectedRecordId: this.selectedRecordId,
-            pendingAction: this.pendingAction,
-            pendingLatitude: this.pendingLatitude,
-            pendingLongitude: this.pendingLongitude,
-            pendingRecordId: this.pendingRecordId,
-            actionToken: this.actionToken > 0 ? String(this.actionToken) : undefined
+            selectedRecordId: this.selectedRecordId ?? "",
+            pendingAction: this.pendingAction ?? "",
+            pendingLatitude: this.pendingLatitude ?? 0,
+            pendingLongitude: this.pendingLongitude ?? 0,
+            pendingRecordId: this.pendingRecordId ?? "",
+            actionToken: String(this.actionToken)
         };
     }
 

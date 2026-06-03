@@ -122,30 +122,49 @@ In-map UX:
 > [!NOTE]
 > "Creating the relevant columns" happens at design time: the table and its columns (latitude, longitude, title, etc.) must already exist in your data source. The control populates **values** on a new row; it does not create table schema at runtime.
 
-Example `OnChange` formula on the control (replace `YourTable` and the column names with yours):
+#### Wiring it up with `OnChange`
+
+The control raises the control's single `OnChange` event whenever an add or delete is requested. Two things make this reliable:
+
+1. **Always-defined outputs.** The control reports concrete values (empty string / `0`) rather than blanks, so the canvas change-detection actually fires `OnChange`. (Returning blank/`undefined` outputs is a common reason `OnChange` never fires in canvas apps.)
+2. **The `actionToken` guard.** `OnChange` fires for *every* output change — including selecting a pin (which updates `selectedRecordId`). Because `pendingAction` stays set ("sticky") until the next action, re-running the formula on an unrelated `OnChange` would repeat the last add/delete. `actionToken` increments only on a genuine add/delete click, so gate your logic on it.
+
+Initialize a tracker in **App.OnStart**:
 
 ```powerapps
-// Each add/delete bumps actionToken, so this OnChange runs once per request.
+Set(varLastToken, "0")
+```
+
+Then set the control's **OnChange** (collection example — swap in your collection/column names):
+
+```powerapps
+// Only act when actionToken changes (a real add/delete click), never on incidental OnChange.
 If(
-    Self.pendingAction = "add",
-    Patch(
-        YourTable,
-        Defaults(YourTable),
-        {
-            Latitude: Value(Self.pendingLatitude),
-            Longitude: Value(Self.pendingLongitude),
-            Title: "New location"
-        }
-    ),
-    Self.pendingAction = "delete",
-    Remove(
-        YourTable,
-        LookUp(YourTable, AccountId = Self.pendingRecordId)
+    Self.actionToken <> varLastToken,
+    Set(varLastToken, Self.actionToken);
+    Switch(
+        Self.pendingAction,
+
+        "add",
+        Collect(
+            colLocations,
+            {
+                recordId:  Text(GUID()),
+                latitude:  Self.pendingLatitude,
+                longitude: Self.pendingLongitude,
+                title:     "New location"
+            }
+        ),
+
+        "delete",
+        RemoveIf( colLocations, recordId = Self.pendingRecordId )
     )
 )
 ```
 
-After the `Patch` / `Remove` updates the bound dataset, the new or removed pin is reflected automatically on the next refresh.
+For a Dataverse table instead of an in-memory collection, swap the bodies for `Patch(YourTable, Defaults(YourTable), {...})` and `Remove(YourTable, LookUp(YourTable, <idColumn> = Self.pendingRecordId))`, keeping the same `actionToken` guard.
+
+After the `Collect`/`RemoveIf` (or `Patch`/`Remove`) updates the bound dataset, the new or removed pin is reflected automatically on the next refresh. Make sure the id you store is text so `recordId = Self.pendingRecordId` compares correctly (the control emits ids as strings); wrap a non-text id with `Text(...)`.
 
 > [!NOTE]
 > This PCF expects a bound dataset with mapped `recordIdColumn`, `latitudeColumn`, `longitudeColumn`, and optional `titleColumn` (for pin labels/popups). If your source data does not have clean coordinates, you can extend this pattern with keyword-to-coordinate lookup using [Azure Maps Fuzzy Search](https://learn.microsoft.com/en-us/rest/api/maps/search/get-search-fuzzy).

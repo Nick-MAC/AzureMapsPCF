@@ -25,6 +25,13 @@ export interface IAzMapPCFProps {
   onDeletePoint?: (recordId: string) => void;
 }
 
+interface SearchResult {
+  id: string;
+  label: string;
+  detail: string;
+  position: atlas.data.Position;
+}
+
 type MapStyleName =
   | 'road'
   | 'grayscale_light'
@@ -592,6 +599,11 @@ export class AzMapPCF extends React.Component<IAzMapPCFProps> {
   private clusterFlyoutAnchor: atlas.data.Position | undefined;
   private runtimeErrorMessage: string | undefined;
   private styleMenuCloseTimeoutId: number | undefined;
+  private searchQuery = '';
+  private searchResults: SearchResult[] = [];
+  private isSearchInFlight = false;
+  private searchErrorMessage: string | undefined;
+  private searchMarker: atlas.HtmlMarker | null = null;
 
   public constructor(props: IAzMapPCFProps) {
     super(props);
@@ -1296,6 +1308,157 @@ export class AzMapPCF extends React.Component<IAzMapPCFProps> {
     }
 
     this.datasource = null;
+    // map.dispose() tears down its markers; just drop our reference.
+    this.searchMarker = null;
+  }
+
+  // Location search (Azure Maps Fuzzy Search) — reuses the control's existing auth.
+  private onSearchQueryChange = (event: React.ChangeEvent<HTMLInputElement>): void => {
+    this.searchQuery = event.target.value;
+    this.forceUpdate();
+  };
+
+  private onSearchKeyDown = (event: React.KeyboardEvent<HTMLInputElement>): void => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      void this.performSearch();
+    }
+  };
+
+  private clearSearch = (): void => {
+    this.searchQuery = '';
+    this.searchResults = [];
+    this.searchErrorMessage = undefined;
+    this.removeSearchMarker();
+    this.forceUpdate();
+  };
+
+  private performSearch = (): void => {
+    void this.performSearchAsync();
+  };
+
+  private async performSearchAsync(): Promise<void> {
+    const query = this.searchQuery.trim();
+    if (query.length === 0 || this.isSearchInFlight) {
+      return;
+    }
+
+    this.isSearchInFlight = true;
+    this.searchErrorMessage = undefined;
+    this.searchResults = [];
+    this.forceUpdate();
+
+    try {
+      const results = await this.fetchFuzzySearchResults(query);
+      this.searchResults = results;
+      this.searchErrorMessage = results.length === 0 ? 'No matches found.' : undefined;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.searchErrorMessage = `Search failed: ${message}`;
+    } finally {
+      this.isSearchInFlight = false;
+      this.forceUpdate();
+    }
+  }
+
+  private async fetchFuzzySearchResults(query: string): Promise<SearchResult[]> {
+    const domain = MapValueHelpers.getValidatedMapDomain(this.props.mapDomain);
+    const params = new URLSearchParams({
+      'api-version': '1.0',
+      query,
+      limit: '5',
+      language: 'en-US'
+    });
+    const headers: Record<string, string> = { Accept: 'application/json' };
+
+    if (this.props.subscriptionKey) {
+      params.set('subscription-key', this.props.subscriptionKey);
+    } else if (this.props.azureMapsAuthFunctionUrl) {
+      const token = await this.fetchSasTokenFromAuthFunction(this.props.azureMapsAuthFunctionUrl);
+      headers.Authorization = `jwt-sas ${token}`;
+    } else {
+      throw new Error('No Azure Maps authentication configured.');
+    }
+
+    const response = await fetch(`https://${domain}/search/fuzzy/json?${params.toString()}`, {
+      method: 'GET',
+      headers
+    });
+
+    if (!response.ok) {
+      throw new Error(`${response.status} ${response.statusText}`);
+    }
+
+    const payload = await response.json() as { results?: unknown[] };
+    return this.mapFuzzyResults(payload.results ?? []);
+  }
+
+  private mapFuzzyResults(rawResults: unknown[]): SearchResult[] {
+    const results: SearchResult[] = [];
+
+    rawResults.forEach((raw, index) => {
+      if (!raw || typeof raw !== 'object') {
+        return;
+      }
+
+      const candidate = raw as {
+        id?: unknown;
+        position?: { lat?: unknown; lon?: unknown };
+        address?: { freeformAddress?: unknown };
+        poi?: { name?: unknown };
+      };
+
+      const latitude = candidate.position?.lat;
+      const longitude = candidate.position?.lon;
+      if (typeof latitude !== 'number' || typeof longitude !== 'number') {
+        return;
+      }
+
+      const freeformAddress = typeof candidate.address?.freeformAddress === 'string'
+        ? candidate.address.freeformAddress
+        : '';
+      const poiName = typeof candidate.poi?.name === 'string' ? candidate.poi.name : '';
+      const label = (poiName || freeformAddress || 'Result').trim();
+      const detail = poiName && freeformAddress ? freeformAddress : '';
+      const id = typeof candidate.id === 'string' && candidate.id.length > 0 ? candidate.id : `result-${index}`;
+
+      results.push({ id, label, detail, position: [longitude, latitude] });
+    });
+
+    return results;
+  }
+
+  private onSearchResultSelected = (result: SearchResult): void => {
+    if (this.map) {
+      this.map.setCamera({ center: result.position, zoom: 13, type: 'ease' });
+    }
+
+    this.showSearchMarker(result.position);
+    this.searchResults = [];
+    // Keep the camera on the search result even if the dataset refreshes.
+    this.skipAutoFitOnNextRender = true;
+    this.forceUpdate();
+  };
+
+  private showSearchMarker(position: atlas.data.Position): void {
+    if (!this.map) {
+      return;
+    }
+
+    if (!this.searchMarker) {
+      this.searchMarker = new atlas.HtmlMarker({ position, color: '#7b2fbf' });
+      this.map.markers.add(this.searchMarker);
+    } else {
+      this.searchMarker.setOptions({ position, visible: true });
+    }
+  }
+
+  private removeSearchMarker(): void {
+    if (this.map && this.searchMarker) {
+      this.map.markers.remove(this.searchMarker);
+    }
+
+    this.searchMarker = null;
   }
 
   private renderClusterFlyout(): React.ReactNode {
@@ -1396,6 +1559,149 @@ export class AzMapPCF extends React.Component<IAzMapPCFProps> {
   }
 
   // React render output
+  private renderSearchBox(): React.ReactNode {
+    const showPanel = this.isSearchInFlight || !!this.searchErrorMessage || this.searchResults.length > 0;
+
+    return (
+      <div
+        style={{
+          position: 'absolute',
+          top: 8,
+          left: 8,
+          zIndex: 10,
+          width: 280,
+          maxWidth: 'calc(100% - 16px)'
+        }}
+      >
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            background: 'rgba(255,255,255,0.97)',
+            border: '1px solid #d1d1d1',
+            borderRadius: 4,
+            overflow: 'hidden'
+          }}
+        >
+          <input
+            type="text"
+            value={this.searchQuery}
+            onChange={this.onSearchQueryChange}
+            onKeyDown={this.onSearchKeyDown}
+            placeholder="Search address, city, state, zip, country"
+            aria-label="Search location"
+            style={{
+              flex: 1,
+              minWidth: 0,
+              border: 'none',
+              outline: 'none',
+              padding: '7px 8px',
+              fontSize: 12,
+              background: 'transparent'
+            }}
+          />
+          {this.searchQuery.length > 0 && (
+            <button
+              type="button"
+              aria-label="Clear search"
+              onClick={this.clearSearch}
+              style={{
+                width: 26,
+                height: 30,
+                border: 'none',
+                background: 'transparent',
+                cursor: 'pointer',
+                fontSize: 16,
+                lineHeight: '16px',
+                color: '#666666'
+              }}
+            >
+              ×
+            </button>
+          )}
+          <button
+            type="button"
+            aria-label="Search"
+            onClick={this.performSearch}
+            disabled={this.isSearchInFlight}
+            style={{
+              width: 32,
+              height: 30,
+              border: 'none',
+              borderLeft: '1px solid #e1e1e1',
+              background: 'transparent',
+              cursor: this.isSearchInFlight ? 'default' : 'pointer',
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center'
+            }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path
+                fill="currentColor"
+                d="M15.5 14h-.79l-.28-.27a6.5 6.5 0 1 0-.7.7l.27.28v.79l5 4.99L20.49 19l-4.99-5Zm-6 0A4.5 4.5 0 1 1 14 9.5 4.49 4.49 0 0 1 9.5 14Z"
+              />
+            </svg>
+          </button>
+        </div>
+
+        {showPanel && (
+          <div
+            style={{
+              marginTop: 4,
+              background: 'rgba(255,255,255,0.98)',
+              border: '1px solid #d1d1d1',
+              borderRadius: 4,
+              boxShadow: '0 4px 10px rgba(0,0,0,0.15)',
+              maxHeight: 240,
+              overflowY: 'auto'
+            }}
+          >
+            {this.isSearchInFlight && (
+              <div style={{ padding: '8px 10px', fontSize: 12, color: '#666666' }}>Searching…</div>
+            )}
+            {!this.isSearchInFlight && this.searchErrorMessage && (
+              <div style={{ padding: '8px 10px', fontSize: 12, color: '#a4262c' }}>{this.searchErrorMessage}</div>
+            )}
+            {!this.isSearchInFlight && this.searchResults.map((result) => (
+              <button
+                key={result.id}
+                type="button"
+                onClick={() => this.onSearchResultSelected(result)}
+                style={{
+                  display: 'block',
+                  width: '100%',
+                  textAlign: 'left',
+                  border: 'none',
+                  borderBottom: '1px solid #f0f0f0',
+                  background: 'transparent',
+                  padding: '7px 10px',
+                  cursor: 'pointer',
+                  fontSize: 12
+                }}
+              >
+                <div
+                  style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                  title={result.label}
+                >
+                  {result.label}
+                </div>
+                {result.detail && (
+                  <div
+                    style={{ color: '#666666', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                    title={result.detail}
+                  >
+                    {result.detail}
+                  </div>
+                )}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   public render(): React.ReactNode {
     if (this.runtimeErrorMessage) {
       return (
@@ -1419,6 +1725,7 @@ export class AzMapPCF extends React.Component<IAzMapPCFProps> {
 
     return (
       <div style={{ position: 'relative', width: '100%', height: heightStyle }}>
+        {this.renderSearchBox()}
         {this.renderClusterFlyout()}
         <MapControls
           isStyleControlHovered={this.isStyleControlHovered}

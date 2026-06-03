@@ -1,6 +1,6 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <manifest>
-  <control namespace="gb" constructor="mapPCF" version="1.0.36" display-name-key="mapPCF" description-key="mapPCF description" control-type="virtual">
+  <control namespace="gb" constructor="mapPCF" version="1.0.39" display-name-key="mapPCF" description-key="mapPCF description" control-type="virtual">
     <external-service-usage enabled="true">
       <domain>atlas.microsoft.com</domain>
       <domain>atlas.azure.us</domain>
@@ -11,10 +11,10 @@
     <property name="mapStyle" display-name-key="Map Style" description-key="Azure Maps style name (for example: road, satellite, grayscale_dark)." of-type="SingleLine.Text" usage="input" required="false" />
     <property name="activeRecordId" display-name-key="Active Record Id" description-key="Input record id to highlight and center on the map." of-type="SingleLine.Text" usage="input" required="false" />
     <property name="selectedRecordId" display-name-key="Selected Record Id" description-key="Record Id for the currently selected map point." of-type="SingleLine.Text" usage="output" required="false" />
-    <property name="pendingAction" display-name-key="Pending Action" description-key="Requested map edit action: 'add' or 'delete'. Read in OnChange to Patch/Remove the source data." of-type="SingleLine.Text" usage="output" required="false" />
-    <property name="pendingLatitude" display-name-key="Pending Latitude" description-key="Latitude of the point being added (set when pendingAction is 'add')." of-type="Decimal" usage="output" required="false" />
-    <property name="pendingLongitude" display-name-key="Pending Longitude" description-key="Longitude of the point being added (set when pendingAction is 'add')." of-type="Decimal" usage="output" required="false" />
-    <property name="pendingRecordId" display-name-key="Pending Record Id" description-key="Record Id of the point being deleted (set when pendingAction is 'delete')." of-type="SingleLine.Text" usage="output" required="false" />
+    <property name="pendingAction" display-name-key="Pending Action" description-key="Requested map edit action (add or delete). Read in OnChange to Patch or Remove the source data." of-type="SingleLine.Text" usage="output" required="false" />
+    <property name="pendingLatitude" display-name-key="Pending Latitude" description-key="Latitude of the point being added (set when pendingAction is add)." of-type="Decimal" usage="output" required="false" />
+    <property name="pendingLongitude" display-name-key="Pending Longitude" description-key="Longitude of the point being added (set when pendingAction is add)." of-type="Decimal" usage="output" required="false" />
+    <property name="pendingRecordId" display-name-key="Pending Record Id" description-key="Record Id of the point being deleted (set when pendingAction is delete)." of-type="SingleLine.Text" usage="output" required="false" />
     <property name="actionToken" display-name-key="Action Token" description-key="Monotonic token that changes on every add/delete request so OnChange fires reliably, even for repeated actions." of-type="SingleLine.Text" usage="output" required="false" />
     <data-set name="sampleDataSet" display-name-key="Map Points Dataset">
       <property-set name="recordIdColumn" display-name-key="Record Id Column" description-key="Column that contains the record identifier for output." of-type="SingleLine.Text" usage="bound" required="true" />
