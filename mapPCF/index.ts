@@ -8,6 +8,11 @@ type EntityRecord = ComponentFramework.PropertyHelper.DataSetApi.EntityRecord;
 export class mapPCF implements ComponentFramework.ReactControl<IInputs, IOutputs> {
     private notifyOutputChanged: () => void = (): void => { return; };
     private selectedRecordId: string | undefined;
+    private pendingAction: string | undefined;
+    private pendingLatitude: number | undefined;
+    private pendingLongitude: number | undefined;
+    private pendingRecordId: string | undefined;
+    private actionToken = 0;
     private isPagingRequestInFlight = false;
     private lastPageFingerprint = "";
     private hasConfiguredPageSize = false;
@@ -68,7 +73,9 @@ export class mapPCF implements ComponentFramework.ReactControl<IInputs, IOutputs
             activeRecordId,
             authConfigurationError,
             points,
-            onPointSelected: this.onPointSelected
+            onPointSelected: this.onPointSelected,
+            onAddPoint: this.onAddPoint,
+            onDeletePoint: this.onDeletePoint
         };
 
         return React.createElement(
@@ -79,7 +86,12 @@ export class mapPCF implements ComponentFramework.ReactControl<IInputs, IOutputs
 
     public getOutputs(): IOutputs {
         return {
-            selectedRecordId: this.selectedRecordId
+            selectedRecordId: this.selectedRecordId,
+            pendingAction: this.pendingAction,
+            pendingLatitude: this.pendingLatitude,
+            pendingLongitude: this.pendingLongitude,
+            pendingRecordId: this.pendingRecordId,
+            actionToken: this.actionToken > 0 ? String(this.actionToken) : undefined
         };
     }
 
@@ -89,6 +101,35 @@ export class mapPCF implements ComponentFramework.ReactControl<IInputs, IOutputs
 
     private onPointSelected = (recordId: string): void => {
         this.selectedRecordId = recordId;
+        this.notifyOutputChanged();
+    };
+
+    // Emit an "add" request. Persistence is handled canvas-side via OnChange (Patch).
+    private onAddPoint = (latitude: number, longitude: number): void => {
+        if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+            return;
+        }
+
+        this.pendingAction = "add";
+        this.pendingLatitude = latitude;
+        this.pendingLongitude = longitude;
+        this.pendingRecordId = undefined;
+        this.actionToken += 1;
+        this.notifyOutputChanged();
+    };
+
+    // Emit a "delete" request. Persistence is handled canvas-side via OnChange (Remove).
+    private onDeletePoint = (recordId: string): void => {
+        const trimmedRecordId = MapPcfHelpers.toNonEmptyTrimmed(recordId);
+        if (!trimmedRecordId) {
+            return;
+        }
+
+        this.pendingAction = "delete";
+        this.pendingRecordId = trimmedRecordId;
+        this.pendingLatitude = undefined;
+        this.pendingLongitude = undefined;
+        this.actionToken += 1;
         this.notifyOutputChanged();
     };
 

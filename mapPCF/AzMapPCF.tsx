@@ -21,6 +21,8 @@ export interface IAzMapPCFProps {
   activeRecordId?: string;
   points?: IMapPoint[];
   onPointSelected?: (recordId: string) => void;
+  onAddPoint?: (latitude: number, longitude: number) => void;
+  onDeletePoint?: (recordId: string) => void;
 }
 
 type MapStyleName =
@@ -62,6 +64,16 @@ interface MapControlsProps {
   onRefocus: () => void;
   onZoomIn: () => void;
   onZoomOut: () => void;
+  isAddModeActive: boolean;
+  isAddControlHovered: boolean;
+  onToggleAddMode: () => void;
+  onAddControlMouseEnter: () => void;
+  onAddControlMouseLeave: () => void;
+  canDelete: boolean;
+  isDeleteControlHovered: boolean;
+  onDeleteSelected: () => void;
+  onDeleteControlMouseEnter: () => void;
+  onDeleteControlMouseLeave: () => void;
 }
 
 // Value and style normalization helpers are kept outside the component
@@ -411,6 +423,77 @@ function MapControls(props: MapControlsProps): React.ReactElement {
         )}
       </button>
 
+      <button
+        type="button"
+        aria-label="Add point"
+        aria-pressed={props.isAddModeActive}
+        onClick={props.onToggleAddMode}
+        onMouseEnter={props.onAddControlMouseEnter}
+        onMouseLeave={props.onAddControlMouseLeave}
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: props.isAddControlHovered ? 6 : 0,
+          background: props.isAddModeActive ? '#2f6ab3' : 'rgba(255,255,255,0.95)',
+          color: props.isAddModeActive ? '#ffffff' : '#222222',
+          border: '1px solid #d1d1d1',
+          borderRadius: 4,
+          padding: props.isAddControlHovered ? '6px 8px' : 0,
+          width: props.isAddControlHovered ? 'auto' : 30,
+          height: 30,
+          cursor: 'pointer',
+          fontSize: 12,
+          whiteSpace: 'nowrap'
+        }}
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <path
+            fill="currentColor"
+            d="M12 2c-3.9 0-7 3.1-7 7 0 5.2 7 13 7 13s7-7.8 7-13c0-3.9-3.1-7-7-7Zm1 7v3h3v2h-3v3h-2v-3H8v-2h3V6h2v3Z"
+          />
+        </svg>
+        {props.isAddControlHovered && (
+          <span>{props.isAddModeActive ? 'Click map to add' : 'Add point'}</span>
+        )}
+      </button>
+
+      {props.canDelete && (
+        <button
+          type="button"
+          aria-label="Delete selected point"
+          onClick={props.onDeleteSelected}
+          onMouseEnter={props.onDeleteControlMouseEnter}
+          onMouseLeave={props.onDeleteControlMouseLeave}
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: props.isDeleteControlHovered ? 6 : 0,
+            background: props.isDeleteControlHovered ? '#c62828' : 'rgba(255,255,255,0.95)',
+            color: props.isDeleteControlHovered ? '#ffffff' : '#c62828',
+            border: '1px solid #d1d1d1',
+            borderRadius: 4,
+            padding: props.isDeleteControlHovered ? '6px 8px' : 0,
+            width: props.isDeleteControlHovered ? 'auto' : 30,
+            height: 30,
+            cursor: 'pointer',
+            fontSize: 12,
+            whiteSpace: 'nowrap'
+          }}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path
+              fill="currentColor"
+              d="M9 3h6l1 2h4v2H4V5h4l1-2Zm-3 6h12l-1 11a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L6 9Zm4 2v8h2v-8h-2Zm4 0v8h2v-8h-2Z"
+            />
+          </svg>
+          {props.isDeleteControlHovered && (
+            <span>Delete point</span>
+          )}
+        </button>
+      )}
+
       <div
         style={{
           display: 'inline-flex',
@@ -500,6 +583,9 @@ export class AzMapPCF extends React.Component<IAzMapPCFProps> {
   private isStyleMenuOpen = false;
   private isStyleControlHovered = false;
   private isClusterControlHovered = false;
+  private isAddModeActive = false;
+  private isAddControlHovered = false;
+  private isDeleteControlHovered = false;
   private skipAutoFitOnNextRender = false;
   private isClusterFlyoutOpen = false;
   private clusterFlyoutPoints: IMapPoint[] = [];
@@ -736,6 +822,9 @@ export class AzMapPCF extends React.Component<IAzMapPCFProps> {
         this.setRuntimeError(error, 'point selected callback');
       }
     }
+
+    // Re-render so selection-dependent controls (e.g. the Delete button) update.
+    this.forceUpdate();
   }
 
   private onClusterClicked = (event: atlas.MapMouseEvent): void => {
@@ -828,6 +917,85 @@ export class AzMapPCF extends React.Component<IAzMapPCFProps> {
       this.isClusterControlHovered = hovered;
       this.forceUpdate();
     }
+  };
+
+  private setAddControlHovered = (hovered: boolean): void => {
+    if (this.isAddControlHovered !== hovered) {
+      this.isAddControlHovered = hovered;
+      this.forceUpdate();
+    }
+  };
+
+  private setDeleteControlHovered = (hovered: boolean): void => {
+    if (this.isDeleteControlHovered !== hovered) {
+      this.isDeleteControlHovered = hovered;
+      this.forceUpdate();
+    }
+  };
+
+  private setAddMode(active: boolean): void {
+    this.isAddModeActive = active;
+    if (this.map) {
+      this.map.getCanvasContainer().style.cursor = active ? 'crosshair' : '';
+    }
+  }
+
+  private toggleAddMode = (): void => {
+    this.setAddMode(!this.isAddModeActive);
+    // Adding and the cluster flyout are mutually exclusive interactions.
+    this.isClusterFlyoutOpen = false;
+    this.clusterFlyoutPoints = [];
+    this.clusterFlyoutAnchor = undefined;
+    this.forceUpdate();
+  };
+
+  private onMapClicked = (event: atlas.MapMouseEvent): void => {
+    if (!this.isAddModeActive) {
+      return;
+    }
+
+    const position = event.position;
+    if (!Array.isArray(position) || position.length < 2) {
+      return;
+    }
+
+    const longitude = position[0];
+    const latitude = position[1];
+    if (typeof longitude !== 'number' || typeof latitude !== 'number') {
+      return;
+    }
+
+    // Add mode is one-shot: place the point and return to normal interaction.
+    this.setAddMode(false);
+    this.forceUpdate();
+
+    if (this.props.onAddPoint) {
+      try {
+        this.props.onAddPoint(latitude, longitude);
+      } catch (error) {
+        this.setRuntimeError(error, 'add point callback');
+      }
+    }
+  };
+
+  private onDeleteSelected = (): void => {
+    const recordId = this.selectedPointId;
+    if (!recordId) {
+      return;
+    }
+
+    if (this.props.onDeletePoint) {
+      try {
+        this.props.onDeletePoint(recordId);
+      } catch (error) {
+        this.setRuntimeError(error, 'delete point callback');
+      }
+    }
+
+    this.selectedPointId = undefined;
+    this.isDeleteControlHovered = false;
+    this.renderPoints();
+    this.forceUpdate();
   };
 
   private zoomIntoCluster = (event: atlas.MapMouseEvent): void => {
@@ -1030,7 +1198,7 @@ export class AzMapPCF extends React.Component<IAzMapPCFProps> {
       });
 
       this.map.events.add('mouseover', pointLayer, (event: atlas.MapMouseEvent) => {
-        if (!this.map || !event.shapes || event.shapes.length === 0) {
+        if (!this.map || !event.shapes || event.shapes.length === 0 || this.isAddModeActive) {
           return;
         }
 
@@ -1060,11 +1228,14 @@ export class AzMapPCF extends React.Component<IAzMapPCFProps> {
         }
 
         popup.close();
-        this.map.getCanvasContainer().style.cursor = '';
+        this.map.getCanvasContainer().style.cursor = this.isAddModeActive ? 'crosshair' : '';
       });
 
+      // Map-level click handles dropping a new point while add mode is active.
+      this.map.events.add('click', this.onMapClicked);
+
       this.map.events.add('click', pointLayer, (event: atlas.MapMouseEvent) => {
-        if (!event.shapes || event.shapes.length === 0) {
+        if (!event.shapes || event.shapes.length === 0 || this.isAddModeActive) {
           return;
         }
 
@@ -1267,6 +1438,16 @@ export class AzMapPCF extends React.Component<IAzMapPCFProps> {
           onRefocus={this.onRefocus}
           onZoomIn={this.onZoomIn}
           onZoomOut={this.onZoomOut}
+          isAddModeActive={this.isAddModeActive}
+          isAddControlHovered={this.isAddControlHovered}
+          onToggleAddMode={this.toggleAddMode}
+          onAddControlMouseEnter={() => this.setAddControlHovered(true)}
+          onAddControlMouseLeave={() => this.setAddControlHovered(false)}
+          canDelete={!!this.selectedPointId && !!this.props.onDeletePoint}
+          isDeleteControlHovered={this.isDeleteControlHovered}
+          onDeleteSelected={this.onDeleteSelected}
+          onDeleteControlMouseEnter={() => this.setDeleteControlHovered(true)}
+          onDeleteControlMouseLeave={() => this.setDeleteControlHovered(false)}
         />
         <div ref={this.mapContainerRef} style={{ width: '100%', height: '100%' }} />
       </div>

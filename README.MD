@@ -103,9 +103,49 @@ Other Property Values:
 | `mapStyle` | Input | No | Text | Default [Azure Maps style](https://learn.microsoft.com/en-us/azure/azure-maps/choose-map-style#add-the-style-picker-control) name, see docs for supported options |
 | `activeRecordId` | Input | No | Text | Record id to force-highlight/center from the canvas app side. |
 | `selectedRecordId` | Output | No | Text | Record id emitted when a user clicks a map point. |
+| `pendingAction` | Output | No | Text | `"add"` or `"delete"` — the edit the user requested in the map. Read this in `OnChange` to decide whether to `Patch` or `Remove`. |
+| `pendingLatitude` | Output | No | Decimal | Latitude of the point to add (set when `pendingAction` is `"add"`). |
+| `pendingLongitude` | Output | No | Decimal | Longitude of the point to add (set when `pendingAction` is `"add"`). |
+| `pendingRecordId` | Output | No | Text | Record id of the point to delete (set when `pendingAction` is `"delete"`). |
+| `actionToken` | Output | No | Text | Monotonic token that changes on every add/delete request. Lets `OnChange` fire reliably even for repeated actions. |
 
 Auth configuration rule:
 - Provide **exactly one** of `subscriptionKey` or `azureMapsAuthFunctionUrl`.
+
+### Adding and deleting points
+The control can request row changes, but (by design for canvas apps) it does **not** write to your data source itself. Instead it emits output properties and the maker wires `Patch()` / `Remove()` in the control's `OnChange`.
+
+In-map UX:
+- **Add a point:** click the **Add point** button (top-right) to enter add mode, then click anywhere on the map. The clicked coordinates are emitted as `pendingLatitude` / `pendingLongitude` with `pendingAction = "add"`. Add mode is one-shot (it turns off after one placement).
+- **Delete a point:** click a pin to select it, then click the **Delete point** button. The selected id is emitted as `pendingRecordId` with `pendingAction = "delete"`.
+
+> [!NOTE]
+> "Creating the relevant columns" happens at design time: the table and its columns (latitude, longitude, title, etc.) must already exist in your data source. The control populates **values** on a new row; it does not create table schema at runtime.
+
+Example `OnChange` formula on the control (replace `YourTable` and the column names with yours):
+
+```powerapps
+// Each add/delete bumps actionToken, so this OnChange runs once per request.
+If(
+    Self.pendingAction = "add",
+    Patch(
+        YourTable,
+        Defaults(YourTable),
+        {
+            Latitude: Value(Self.pendingLatitude),
+            Longitude: Value(Self.pendingLongitude),
+            Title: "New location"
+        }
+    ),
+    Self.pendingAction = "delete",
+    Remove(
+        YourTable,
+        LookUp(YourTable, AccountId = Self.pendingRecordId)
+    )
+)
+```
+
+After the `Patch` / `Remove` updates the bound dataset, the new or removed pin is reflected automatically on the next refresh.
 
 > [!NOTE]
 > This PCF expects a bound dataset with mapped `recordIdColumn`, `latitudeColumn`, `longitudeColumn`, and optional `titleColumn` (for pin labels/popups). If your source data does not have clean coordinates, you can extend this pattern with keyword-to-coordinate lookup using [Azure Maps Fuzzy Search](https://learn.microsoft.com/en-us/rest/api/maps/search/get-search-fuzzy).
