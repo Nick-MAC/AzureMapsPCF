@@ -8,25 +8,25 @@
       <LocalizedName description="AzureMapPCF" languagecode="1033" />
     </LocalizedNames>
     <Descriptions />
-    <Version>1.1.0.15</Version>
+    <Version>1.1.0.16</Version>
     <!-- Solution Package Type: Unmanaged(0)/Managed(1)/Both(2)-->
     <Managed>2</Managed>
     <Publisher>
       <!-- Unique Publisher Name of Cds Solution -->
-      <UniqueName>gbishop</UniqueName>
+      <UniqueName>CBAS</UniqueName>
       <LocalizedNames>
         <!-- Localized Cds Publisher Name in language code-->
-        <LocalizedName description="gbishop" languagecode="1033" />
+        <LocalizedName description="CBAS" languagecode="1033" />
       </LocalizedNames>
       <Descriptions>
         <!-- Description of Cds Publisher in language code -->
-        <Description description="gbishop" languagecode="1033" />
+        <Description description="CBAS" languagecode="1033" />
       </Descriptions>
       <EMailAddress xsi:nil="true">
       </EMailAddress>
-      <SupportingWebsiteUrl>https://github.com/Grayson-Bishop/AzureMapsPCF</SupportingWebsiteUrl>
+      <SupportingWebsiteUrl>https://github.com/Nick-MAC/AzureMapsPCF</SupportingWebsiteUrl>
       <!-- Customization Prefix for the Cds Publisher-->
-      <CustomizationPrefix>gbishop</CustomizationPrefix>
+      <CustomizationPrefix>cbas</CustomizationPrefix>
       <!-- Derived Option Value Prefix for the Customization Prefix of Cds Publisher -->
       <CustomizationOptionValuePrefix>89375</CustomizationOptionValuePrefix>
       <Addresses>
