@@ -63,6 +63,18 @@ export class mapPCF implements ComponentFramework.ReactControl<IInputs, IOutputs
         const mapDomain = MapPcfHelpers.sanitizeMapDomain(context.parameters?.mapDomain?.raw);
         const authConfigurationError = MapPcfHelpers.getAuthConfigurationError(subscriptionKey, azureMapsAuthFunctionUrl);
 
+        // Feature-visibility flags. TwoOptions inputs default to false when unset, so
+        // existing features use opt-out ("hide*") semantics to stay backward compatible,
+        // while the newer open-record affordance is opt-in ("show*").
+        const hideAddPoint = context.parameters?.hideAddPoint?.raw === true;
+        const hideDeletePoint = context.parameters?.hideDeletePoint?.raw === true;
+        const hideSearchBar = context.parameters?.hideSearchBar?.raw === true;
+        const hideStyleControl = context.parameters?.hideStyleControl?.raw === true;
+        const hideClusterControl = context.parameters?.hideClusterControl?.raw === true;
+        const hideZoomControls = context.parameters?.hideZoomControls?.raw === true;
+        const showOpenRecord = context.parameters?.showOpenRecord?.raw === true;
+        const openButtonLabel = MapPcfHelpers.toNonEmptyTrimmed(context.parameters?.openButtonLabel?.raw);
+
         const props: IAzMapPCFProps = {
             subscriptionKey,
             azureMapsAuthFunctionUrl,
@@ -73,9 +85,18 @@ export class mapPCF implements ComponentFramework.ReactControl<IInputs, IOutputs
             activeRecordId,
             authConfigurationError,
             points,
+            hideAddPoint,
+            hideDeletePoint,
+            hideSearchBar,
+            hideStyleControl,
+            hideClusterControl,
+            hideZoomControls,
+            showOpenRecord,
+            openButtonLabel,
             onPointSelected: this.onPointSelected,
             onAddPoint: this.onAddPoint,
-            onDeletePoint: this.onDeletePoint
+            onDeletePoint: this.onDeletePoint,
+            onOpenRecord: this.onOpenRecord
         };
 
         return React.createElement(
@@ -129,6 +150,22 @@ export class mapPCF implements ComponentFramework.ReactControl<IInputs, IOutputs
         }
 
         this.pendingAction = "delete";
+        this.pendingRecordId = trimmedRecordId;
+        this.pendingLatitude = undefined;
+        this.pendingLongitude = undefined;
+        this.actionToken += 1;
+        this.notifyOutputChanged();
+    };
+
+    // Emit an "open" request. The canvas app reads pendingAction/pendingRecordId in
+    // OnChange to run its own navigation Power Fx (the OnSelect-equivalent for a code component).
+    private onOpenRecord = (recordId: string): void => {
+        const trimmedRecordId = MapPcfHelpers.toNonEmptyTrimmed(recordId);
+        if (!trimmedRecordId) {
+            return;
+        }
+
+        this.pendingAction = "open";
         this.pendingRecordId = trimmedRecordId;
         this.pendingLatitude = undefined;
         this.pendingLongitude = undefined;
