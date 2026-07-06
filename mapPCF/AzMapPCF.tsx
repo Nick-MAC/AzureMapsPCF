@@ -20,9 +20,18 @@ export interface IAzMapPCFProps {
   mapStyle?: string;
   activeRecordId?: string;
   points?: IMapPoint[];
+  hideAddPoint?: boolean;
+  hideDeletePoint?: boolean;
+  hideSearchBar?: boolean;
+  hideStyleControl?: boolean;
+  hideClusterControl?: boolean;
+  hideZoomControls?: boolean;
+  showOpenRecord?: boolean;
+  openButtonLabel?: string;
   onPointSelected?: (recordId: string) => void;
   onAddPoint?: (latitude: number, longitude: number) => void;
   onDeletePoint?: (recordId: string) => void;
+  onOpenRecord?: (recordId: string) => void;
 }
 
 interface SearchResult {
@@ -54,6 +63,7 @@ interface MapCameraSnapshot {
 }
 
 interface MapControlsProps {
+  showStyleControl: boolean;
   isStyleControlHovered: boolean;
   isStyleMenuOpen: boolean;
   styleLabel: string;
@@ -63,14 +73,17 @@ interface MapControlsProps {
   onStyleControlMouseLeave: () => void;
   onToggleStyleMenu: () => void;
   onStyleSelected: (style: MapStyleName) => void;
+  showClusterControl: boolean;
   clusteringEnabled: boolean;
   isClusterControlHovered: boolean;
   onToggleClustering: () => void;
   onClusterControlMouseEnter: () => void;
   onClusterControlMouseLeave: () => void;
+  showZoomControls: boolean;
   onRefocus: () => void;
   onZoomIn: () => void;
   onZoomOut: () => void;
+  showAddControl: boolean;
   isAddModeActive: boolean;
   isAddControlHovered: boolean;
   onToggleAddMode: () => void;
@@ -323,6 +336,7 @@ function MapControls(props: MapControlsProps): React.ReactElement {
         gap: 6
       }}
     >
+      {props.showStyleControl && (
       <div
         onMouseEnter={props.onStyleControlMouseEnter}
         onMouseLeave={props.onStyleControlMouseLeave}
@@ -396,7 +410,9 @@ function MapControls(props: MapControlsProps): React.ReactElement {
           </div>
         )}
       </div>
+      )}
 
+      {props.showClusterControl && (
       <button
         type="button"
         aria-label="Toggle clustering"
@@ -429,7 +445,9 @@ function MapControls(props: MapControlsProps): React.ReactElement {
           <span>Clusters: {props.clusteringEnabled ? 'On' : 'Off'}</span>
         )}
       </button>
+      )}
 
+      {props.showAddControl && (
       <button
         type="button"
         aria-label="Add point"
@@ -464,6 +482,7 @@ function MapControls(props: MapControlsProps): React.ReactElement {
           <span>{props.isAddModeActive ? 'Click map to add' : 'Add point'}</span>
         )}
       </button>
+      )}
 
       {props.canDelete && (
         <button
@@ -501,6 +520,7 @@ function MapControls(props: MapControlsProps): React.ReactElement {
         </button>
       )}
 
+      {props.showZoomControls && (
       <div
         style={{
           display: 'inline-flex',
@@ -563,6 +583,7 @@ function MapControls(props: MapControlsProps): React.ReactElement {
           -
         </button>
       </div>
+      )}
     </div>
   );
 }
@@ -1246,6 +1267,10 @@ export class AzMapPCF extends React.Component<IAzMapPCFProps> {
       // Map-level click handles dropping a new point while add mode is active.
       this.map.events.add('click', this.onMapClicked);
 
+      // Keep anchored overlays (selection callout, cluster flyout) glued to their
+      // map coordinates as the camera pans or zooms.
+      this.map.events.add('move', this.onMapMoved);
+
       this.map.events.add('click', pointLayer, (event: atlas.MapMouseEvent) => {
         if (!event.shapes || event.shapes.length === 0 || this.isAddModeActive) {
           return;
@@ -1459,6 +1484,135 @@ export class AzMapPCF extends React.Component<IAzMapPCFProps> {
     }
 
     this.searchMarker = null;
+  }
+
+  // Selection callout (open-record affordance)
+  private onMapMoved = (): void => {
+    if (this.isClusterFlyoutOpen || this.isSelectionCalloutVisible()) {
+      this.forceUpdate();
+    }
+  };
+
+  private getSelectedPoint(): IMapPoint | undefined {
+    return MapCameraHelpers.getPointById(this.props.points ?? [], this.selectedPointId);
+  }
+
+  private isSelectionCalloutVisible(): boolean {
+    return (
+      !!this.props.showOpenRecord
+      && !!this.props.onOpenRecord
+      && !this.isClusterFlyoutOpen
+      && !!this.getSelectedPoint()
+    );
+  }
+
+  private onOpenSelected = (): void => {
+    const recordId = this.selectedPointId;
+    if (!recordId || !this.props.onOpenRecord) {
+      return;
+    }
+
+    try {
+      this.props.onOpenRecord(recordId);
+    } catch (error) {
+      this.setRuntimeError(error, 'open record callback');
+    }
+  };
+
+  private dismissSelectionCallout = (): void => {
+    this.selectedPointId = undefined;
+    this.renderPoints();
+    this.forceUpdate();
+  };
+
+  private renderSelectionCallout(): React.ReactNode {
+    if (!this.map || !this.isSelectionCalloutVisible()) {
+      return null;
+    }
+
+    const point = this.getSelectedPoint();
+    if (!point) {
+      return null;
+    }
+
+    const mapContainer = this.mapContainerRef.current;
+    const containerWidth = mapContainer?.clientWidth ?? 0;
+    const panelWidth = 220;
+    const estimatedHeight = 92;
+    const anchorPixels = this.map.positionsToPixels([[point.longitude, point.latitude]])[0];
+    const anchorX = typeof anchorPixels?.[0] === 'number' ? anchorPixels[0] : 0;
+    const anchorY = typeof anchorPixels?.[1] === 'number' ? anchorPixels[1] : 0;
+
+    // Center the card over the pin and float it above the pin tip.
+    const desiredLeft = anchorX - panelWidth / 2;
+    const desiredTop = anchorY - estimatedHeight - 18;
+    const maxLeft = Math.max(8, containerWidth - panelWidth - 8);
+    const calloutLeft = Math.min(Math.max(8, desiredLeft), maxLeft);
+    const calloutTop = Math.max(8, desiredTop);
+    const openLabel = MapValueHelpers.toNonEmptyTrimmed(this.props.openButtonLabel) ?? 'Open project';
+
+    return (
+      <div
+        style={{
+          position: 'absolute',
+          top: calloutTop,
+          left: calloutLeft,
+          zIndex: 12,
+          width: panelWidth,
+          background: 'rgba(255,255,255,0.98)',
+          border: '1px solid #d1d1d1',
+          borderRadius: 6,
+          boxShadow: '0 6px 16px rgba(0,0,0,0.2)',
+          padding: 8
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 6 }}>
+          <span
+            title={point.title}
+            style={{
+              fontSize: 12,
+              fontWeight: 600,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap'
+            }}
+          >
+            {point.title}
+          </span>
+          <button
+            type="button"
+            aria-label="Close"
+            onClick={this.dismissSelectionCallout}
+            style={{ border: 'none', background: 'transparent', cursor: 'pointer', fontSize: 16, lineHeight: '16px' }}
+          >
+            ×
+          </button>
+        </div>
+        <button
+          type="button"
+          onClick={this.onOpenSelected}
+          style={{
+            marginTop: 8,
+            width: '100%',
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 6,
+            background: '#2f6ab3',
+            color: '#ffffff',
+            border: 'none',
+            borderRadius: 4,
+            padding: '8px 10px',
+            cursor: 'pointer',
+            fontSize: 12,
+            fontWeight: 600
+          }}
+        >
+          <span>{openLabel}</span>
+          <span aria-hidden="true">▸</span>
+        </button>
+      </div>
+    );
   }
 
   private renderClusterFlyout(): React.ReactNode {
@@ -1725,9 +1879,11 @@ export class AzMapPCF extends React.Component<IAzMapPCFProps> {
 
     return (
       <div style={{ position: 'relative', width: '100%', height: heightStyle }}>
-        {this.renderSearchBox()}
+        {!this.props.hideSearchBar && this.renderSearchBox()}
         {this.renderClusterFlyout()}
+        {this.renderSelectionCallout()}
         <MapControls
+          showStyleControl={!this.props.hideStyleControl}
           isStyleControlHovered={this.isStyleControlHovered}
           isStyleMenuOpen={this.isStyleMenuOpen}
           styleLabel={MapValueHelpers.getStyleLabel(this.selectedStyle, this.styleMenuItems)}
@@ -1737,20 +1893,23 @@ export class AzMapPCF extends React.Component<IAzMapPCFProps> {
           onStyleControlMouseLeave={this.onStyleControlMouseLeave}
           onToggleStyleMenu={this.toggleStyleMenu}
           onStyleSelected={this.onStyleSelected}
+          showClusterControl={!this.props.hideClusterControl}
           clusteringEnabled={this.clusteringEnabled}
           isClusterControlHovered={this.isClusterControlHovered}
           onToggleClustering={this.toggleClustering}
           onClusterControlMouseEnter={() => this.setClusterControlHovered(true)}
           onClusterControlMouseLeave={() => this.setClusterControlHovered(false)}
+          showZoomControls={!this.props.hideZoomControls}
           onRefocus={this.onRefocus}
           onZoomIn={this.onZoomIn}
           onZoomOut={this.onZoomOut}
+          showAddControl={!this.props.hideAddPoint}
           isAddModeActive={this.isAddModeActive}
           isAddControlHovered={this.isAddControlHovered}
           onToggleAddMode={this.toggleAddMode}
           onAddControlMouseEnter={() => this.setAddControlHovered(true)}
           onAddControlMouseLeave={() => this.setAddControlHovered(false)}
-          canDelete={!!this.selectedPointId && !!this.props.onDeletePoint}
+          canDelete={!!this.selectedPointId && !!this.props.onDeletePoint && !this.props.hideDeletePoint}
           isDeleteControlHovered={this.isDeleteControlHovered}
           onDeleteSelected={this.onDeleteSelected}
           onDeleteControlMouseEnter={() => this.setDeleteControlHovered(true)}

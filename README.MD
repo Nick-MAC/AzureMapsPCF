@@ -102,12 +102,22 @@ Other Property Values:
 | `mapDomain` | Input | No | Text | [Azure Maps domain host](https://learn.microsoft.com/en-us/azure/azure-maps/how-to-use-map-control#azure-government-cloud-support). Use `atlas.microsoft.com` (Azure Commercial / GCC) or `atlas.azure.us` (Azure Government / GCCH, DOD). |
 | `mapStyle` | Input | No | Text | Default [Azure Maps style](https://learn.microsoft.com/en-us/azure/azure-maps/choose-map-style#add-the-style-picker-control) name, see docs for supported options |
 | `activeRecordId` | Input | No | Text | Record id to force-highlight/center from the canvas app side. |
+| `hideAddPoint` | Input | No | Yes/No (boolean) | When `true`, hides the **Add point** control and disables click-to-add. Defaults to shown. |
+| `hideDeletePoint` | Input | No | Yes/No (boolean) | When `true`, hides the **Delete point** control. Defaults to shown. |
+| `hideSearchBar` | Input | No | Yes/No (boolean) | When `true`, hides the location search box. Defaults to shown. |
+| `hideStyleControl` | Input | No | Yes/No (boolean) | When `true`, hides the map style menu. Defaults to shown. |
+| `hideClusterControl` | Input | No | Yes/No (boolean) | When `true`, hides the clustering on/off toggle. Clustering behavior is unaffected. Defaults to shown. |
+| `hideZoomControls` | Input | No | Yes/No (boolean) | When `true`, hides the refocus and zoom in/out controls. Defaults to shown. |
+| `showOpenRecord` | Input | No | Yes/No (boolean) | When `true`, a selected pin shows a callout with an **open** button that emits `pendingAction = "open"`. Defaults to off. |
+| `openButtonLabel` | Input | No | Text | Label for the open button in the selection callout. Defaults to `"Open project"`. |
 | `selectedRecordId` | Output | No | Text | Record id emitted when a user clicks a map point. |
-| `pendingAction` | Output | No | Text | `"add"` or `"delete"` — the edit the user requested in the map. Read this in `OnChange` to decide whether to `Patch` or `Remove`. |
+| `pendingAction` | Output | No | Text | `"add"`, `"delete"`, or `"open"` — the action the user requested in the map. Read this in `OnChange` to `Patch`, `Remove`, or navigate. |
 | `pendingLatitude` | Output | No | Decimal | Latitude of the point to add (set when `pendingAction` is `"add"`). |
 | `pendingLongitude` | Output | No | Decimal | Longitude of the point to add (set when `pendingAction` is `"add"`). |
-| `pendingRecordId` | Output | No | Text | Record id of the point to delete (set when `pendingAction` is `"delete"`). |
-| `actionToken` | Output | No | Text | Monotonic token that changes on every add/delete request. Lets `OnChange` fire reliably even for repeated actions. |
+| `pendingRecordId` | Output | No | Text | Record id of the affected point (set when `pendingAction` is `"delete"` or `"open"`). |
+| `actionToken` | Output | No | Text | Monotonic token that changes on every add/delete/open request. Lets `OnChange` fire reliably even for repeated actions. |
+
+Every control is individually hideable via the `hide*` inputs above, so the same control can be dropped on a read-only overview screen (e.g. `hideAddPoint`/`hideDeletePoint` = `true`) and a full-edit screen without code changes. The `hide*` flags default to **shown** (unset = visible), while `showOpenRecord` is opt-in.
 
 Auth configuration rule:
 - Provide **exactly one** of `subscriptionKey` or `azureMapsAuthFunctionUrl`.
@@ -118,6 +128,7 @@ The control can request row changes, but (by design for canvas apps) it does **n
 In-map UX:
 - **Add a point:** click the **Add point** button (top-right) to enter add mode, then click anywhere on the map. The clicked coordinates are emitted as `pendingLatitude` / `pendingLongitude` with `pendingAction = "add"`. Add mode is one-shot (it turns off after one placement).
 - **Delete a point:** click a pin to select it, then click the **Delete point** button. The selected id is emitted as `pendingRecordId` with `pendingAction = "delete"`.
+- **Open a record:** with `showOpenRecord = true`, clicking a pin shows a callout with an **open** button (label set by `openButtonLabel`). Clicking it emits the pin's id as `pendingRecordId` with `pendingAction = "open"`. A code component has no per-pin `OnSelect`, so this reuses the same `OnChange` + `actionToken` mechanism — handle `"open"` in `OnChange` to run your own navigation Power Fx (e.g. `Navigate(...)`).
 
 > [!NOTE]
 > "Creating the relevant columns" happens at design time: the table and its columns (latitude, longitude, title, etc.) must already exist in your data source. The control populates **values** on a new row; it does not create table schema at runtime.
@@ -157,7 +168,11 @@ If(
         ),
 
         "delete",
-        RemoveIf( colLocations, recordId = Self.pendingRecordId )
+        RemoveIf( colLocations, recordId = Self.pendingRecordId ),
+
+        // Requires showOpenRecord = true. Swap in your existing navigation Power Fx.
+        "open",
+        Navigate( ProjectLocationScreen, ScreenTransition.None, { RecordId: Self.pendingRecordId } )
     )
 )
 ```
