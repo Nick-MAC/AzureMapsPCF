@@ -1594,6 +1594,7 @@ export class AzMapPCF extends React.Component<IAzMapPCFProps> {
           style={{
             marginTop: 8,
             width: '100%',
+            boxSizing: 'border-box',
             display: 'inline-flex',
             alignItems: 'center',
             justifyContent: 'center',
