@@ -1,6 +1,6 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <manifest>
-  <control namespace="gb" constructor="mapPCF" version="1.0.40" display-name-key="mapPCF" description-key="mapPCF description" control-type="virtual">
+  <control namespace="gb" constructor="mapPCF" version="1.0.41" display-name-key="mapPCF" description-key="mapPCF description" control-type="virtual">
     <external-service-usage enabled="true">
       <domain>atlas.microsoft.com</domain>
       <domain>atlas.azure.us</domain>
@@ -16,8 +16,8 @@
     <property name="hideStyleControl" display-name-key="Hide Style Control" description-key="When true, hides the map style menu. Defaults to shown." of-type="TwoOptions" usage="input" required="false" />
     <property name="hideClusterControl" display-name-key="Hide Cluster Control" description-key="When true, hides the clustering on/off toggle. Clustering behavior is unaffected. Defaults to shown." of-type="TwoOptions" usage="input" required="false" />
     <property name="hideZoomControls" display-name-key="Hide Zoom Controls" description-key="When true, hides the refocus and zoom in/out controls. Defaults to shown." of-type="TwoOptions" usage="input" required="false" />
-    <property name="showOpenRecord" display-name-key="Show Open Record" description-key="When true, a selected point shows a callout with an open button that emits pendingAction 'open'. Defaults to off." of-type="TwoOptions" usage="input" required="false" />
-    <property name="openButtonLabel" display-name-key="Open Button Label" description-key="Label for the open-record button in the selection callout. Defaults to 'Open project'." of-type="SingleLine.Text" usage="input" required="false" />
+    <property name="showOpenRecord" display-name-key="Show Open Record" description-key="When true, a selected point shows a callout with an open button that sets pendingAction to open. Defaults to off." of-type="TwoOptions" usage="input" required="false" />
+    <property name="openButtonLabel" display-name-key="Open Button Label" description-key="Label for the open-record button in the selection callout. Defaults to Open project." of-type="SingleLine.Text" usage="input" required="false" />
     <property name="selectedRecordId" display-name-key="Selected Record Id" description-key="Record Id for the currently selected map point." of-type="SingleLine.Text" usage="output" required="false" />
     <property name="pendingAction" display-name-key="Pending Action" description-key="Requested map action (add, delete, or open). Read in OnChange to Patch, Remove, or navigate. Use pendingRecordId for delete/open and pendingLatitude/pendingLongitude for add." of-type="SingleLine.Text" usage="output" required="false" />
     <property name="pendingLatitude" display-name-key="Pending Latitude" description-key="Latitude of the point being added (set when pendingAction is add)." of-type="Decimal" usage="output" required="false" />
