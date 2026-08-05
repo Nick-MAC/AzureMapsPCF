@@ -619,6 +619,11 @@ export class AzMapPCF extends React.Component<IAzMapPCFProps> {
   private clusterFlyoutPoints: IMapPoint[] = [];
   private clusterFlyoutAnchor: atlas.data.Position | undefined;
   private runtimeErrorMessage: string | undefined;
+  // Azure Maps account client ID, decoded from the SAS token's `iss` claim.
+  // Required as the `x-ms-client-id` header on data-plane requests in SAS mode —
+  // the Web SDK does NOT send it for authType 'sas', so atlas returns 401 InvalidClientId
+  // unless we inject it ourselves via transformRequest.
+  private azureMapsClientId: string | undefined;
   private styleMenuCloseTimeoutId: number | undefined;
   private searchQuery = '';
   private searchResults: SearchResult[] = [];
@@ -1053,10 +1058,16 @@ export class AzMapPCF extends React.Component<IAzMapPCFProps> {
 
     const contentType = response.headers.get('content-type') ?? '';
     if (contentType.toLowerCase().includes('application/json')) {
-      const payload = await response.json() as { token?: string; accountSasToken?: string; sasToken?: string };
+      const payload = await response.json() as { token?: string; accountSasToken?: string; sasToken?: string; clientId?: string };
       const token = payload.token ?? payload.accountSasToken ?? payload.sasToken;
       if (token && token.trim().length > 0) {
-        return token.trim();
+        // Prefer an explicit clientId from the auth function (the Maps account's Client ID
+        // from its Authentication blade) — the token's `iss` claim is NOT that value.
+        if (typeof payload.clientId === 'string' && payload.clientId.trim().length > 0) {
+          this.azureMapsClientId = payload.clientId.trim();
+          return token.trim();
+        }
+        return this.captureTokenClientId(token.trim());
       }
     }
 
@@ -1064,7 +1075,27 @@ export class AzMapPCF extends React.Component<IAzMapPCFProps> {
     if (tokenText.length === 0) {
       throw new Error('Auth function response did not include a token value.');
     }
-    return tokenText;
+    return this.captureTokenClientId(tokenText);
+  }
+
+  // The Azure Maps SAS token is a JWT whose `iss` claim is the Maps account's client ID.
+  // atlas requires that value as the `x-ms-client-id` header in SAS mode, so decode it here
+  // and cache it for transformRequest to inject. Returns the token unchanged.
+  private captureTokenClientId(token: string): string {
+    try {
+      const parts = token.split('.');
+      if (parts.length >= 2) {
+        const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+        const padded = base64.padEnd(base64.length + (4 - (base64.length % 4)) % 4, '=');
+        const claims = JSON.parse(atob(padded)) as { iss?: unknown };
+        if (typeof claims.iss === 'string' && claims.iss.length > 0) {
+          this.azureMapsClientId = claims.iss;
+        }
+      }
+    } catch (error) {
+      console.warn('[AzMapPCF] Could not decode client ID (iss) from SAS token:', error);
+    }
+    return token;
   }
 
   // Map creation, event wiring, and data rendering
@@ -1117,8 +1148,22 @@ export class AzMapPCF extends React.Component<IAzMapPCFProps> {
           }
         };
 
+      // In SAS mode the SDK does not send x-ms-client-id, which atlas requires to resolve
+      // the Maps account (otherwise 401 InvalidClientId). Inject it on atlas requests using
+      // the client ID decoded from the token's `iss` claim. getToken always runs before any
+      // data request, so azureMapsClientId is populated by the time this fires.
+      const transformRequest = usingAuthFunction
+        ? (url: string): atlas.RequestParameters => {
+          if (this.azureMapsClientId && url.includes(mapDomain)) {
+            return { url, headers: { 'x-ms-client-id': this.azureMapsClientId } };
+          }
+          return { url };
+        }
+        : undefined;
+
       this.map = new atlas.Map(this.mapContainerRef.current, {
         authOptions,
+        transformRequest,
         center,
         zoom,
         style,
@@ -1130,6 +1175,14 @@ export class AzMapPCF extends React.Component<IAzMapPCFProps> {
       this.setRuntimeError(error, 'create map');
       return;
     }
+
+    // Surface asynchronous failures (token fetch/CORS, 401 from atlas, tile errors).
+    // These fire after the try/catch above, so without this they leave a blank map
+    // with the error only in the browser console — especially in auth-function (SAS) mode.
+    this.map.events.add('error', (event: atlas.MapErrorEvent) => {
+      console.error('[AzMapPCF] Map error event:', event.error);
+      this.setRuntimeError(event.error, usingAuthFunction ? 'authenticate (SAS)' : 'map runtime');
+    });
 
     this.map.events.add('ready', () => {
       try {
@@ -1401,6 +1454,10 @@ export class AzMapPCF extends React.Component<IAzMapPCFProps> {
     } else if (this.props.azureMapsAuthFunctionUrl) {
       const token = await this.fetchSasTokenFromAuthFunction(this.props.azureMapsAuthFunctionUrl);
       headers.Authorization = `jwt-sas ${token}`;
+      // atlas requires the account client ID alongside a SAS token (see initializeMap).
+      if (this.azureMapsClientId) {
+        headers['x-ms-client-id'] = this.azureMapsClientId;
+      }
     } else {
       throw new Error('No Azure Maps authentication configured.');
     }
