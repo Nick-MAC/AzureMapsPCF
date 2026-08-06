@@ -11,6 +11,9 @@
     <Name>GeoData</Name>
     <ProjectGuid>0d76b23e-7210-4e08-bd52-fa012a3b676e</ProjectGuid>
     <OutputPath>$(MSBuildThisFileDirectory)out\controls</OutputPath>
+    <!-- Always ship the minified production webpack bundle: dev builds embed
+         eval() (flagged by the Power Apps solution checker) and are ~5x larger. -->
+    <PcfBuildMode>production</PcfBuildMode>
   </PropertyGroup>
 
   <PropertyGroup>
