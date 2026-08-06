@@ -1,6 +1,6 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <manifest>
-  <control namespace="gb" constructor="mapPCF" version="1.0.46" display-name-key="mapPCF" description-key="mapPCF description" control-type="virtual">
+  <control namespace="gb" constructor="mapPCF" version="1.0.47" display-name-key="mapPCF" description-key="mapPCF description" control-type="virtual">
     <external-service-usage enabled="true">
       <domain>atlas.microsoft.com</domain>
       <domain>atlas.azure.us</domain>

@@ -51,7 +51,7 @@ interface SearchResult {
 
 // Fisheries coral palette (client brand): single points coral, clusters dark coral,
 // selection bright coral so it stays visible inside an all-coral scheme.
-const DEFAULT_PIN_COLOR = '#b71300';           // Coral
+const DEFAULT_PIN_COLOR = '#db2207';           // Vivid Coral
 const SELECTED_PIN_COLOR = '#ff6c57';          // Bright Coral
 const CLUSTER_COLOR = '#901200';               // Dark Coral
 const CLUSTER_WITH_SELECTED_COLOR = '#ff6c57'; // Bright Coral
@@ -1352,6 +1352,11 @@ export class AzMapPCF extends React.Component<IAzMapPCFProps> {
 
         const clusterCountLayer = new atlas.layer.SymbolLayer(this.datasource, undefined, {
           filter: ['has', 'point_count'],
+          iconOptions: {
+            // Symbol layers render a default blue marker when no image is set —
+            // this layer is text-only (the count inside the cluster bubble).
+            image: 'none'
+          },
           textOptions: {
             textField: ['get', 'point_count_abbreviated'],
             color: '#ffffff',
