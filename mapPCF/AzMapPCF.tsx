@@ -7,6 +7,7 @@ export interface IMapPoint {
   id: string;
   latitude: number;
   longitude: number;
+  color?: string;
   title: string;
 }
 
@@ -18,6 +19,10 @@ export interface IAzMapPCFProps {
   allocatedWidth?: number;
   allocatedHeight?: number;
   mapStyle?: string;
+  defaultLatitude?: number;
+  defaultLongitude?: number;
+  defaultZoom?: number;
+  searchCountrySet?: string;
   activeRecordId?: string;
   points?: IMapPoint[];
   hideAddPoint?: boolean;
@@ -39,7 +44,33 @@ interface SearchResult {
   label: string;
   detail: string;
   position: atlas.data.Position;
+  // Present on area results (states, cities): frame the whole area instead of
+  // zooming to its center point.
+  bounds?: atlas.data.BoundingBox;
 }
+
+// Fisheries coral palette (client brand): single points coral, clusters dark coral,
+// selection bright coral so it stays visible inside an all-coral scheme.
+const DEFAULT_PIN_COLOR = '#db2207';           // Vivid Coral
+const SELECTED_PIN_COLOR = '#ff6c57';          // Bright Coral
+const CLUSTER_COLOR = '#901200';               // Dark Coral
+const CLUSTER_WITH_SELECTED_COLOR = '#ff6c57'; // Bright Coral
+
+// Full state names rank as Geography results; bare abbreviations mostly match
+// unrelated POIs worldwide, so expand them before querying (US searches only).
+const US_STATE_ABBREVIATIONS: Record<string, string> = {
+  al: 'Alabama', ak: 'Alaska', az: 'Arizona', ar: 'Arkansas', ca: 'California',
+  co: 'Colorado', ct: 'Connecticut', de: 'Delaware', fl: 'Florida', ga: 'Georgia',
+  hi: 'Hawaii', id: 'Idaho', il: 'Illinois', in: 'Indiana', ia: 'Iowa',
+  ks: 'Kansas', ky: 'Kentucky', la: 'Louisiana', me: 'Maine', md: 'Maryland',
+  ma: 'Massachusetts', mi: 'Michigan', mn: 'Minnesota', ms: 'Mississippi', mo: 'Missouri',
+  mt: 'Montana', ne: 'Nebraska', nv: 'Nevada', nh: 'New Hampshire', nj: 'New Jersey',
+  nm: 'New Mexico', ny: 'New York', nc: 'North Carolina', nd: 'North Dakota', oh: 'Ohio',
+  ok: 'Oklahoma', or: 'Oregon', pa: 'Pennsylvania', ri: 'Rhode Island', sc: 'South Carolina',
+  sd: 'South Dakota', tn: 'Tennessee', tx: 'Texas', ut: 'Utah', vt: 'Vermont',
+  va: 'Virginia', wa: 'Washington', wv: 'West Virginia', wi: 'Wisconsin', wy: 'Wyoming',
+  dc: 'District of Columbia', pr: 'Puerto Rico'
+};
 
 type MapStyleName =
   | 'road'
@@ -233,8 +264,40 @@ class MapCameraHelpers {
     this.centerOnPoint(map, selectedPoint, clusteringEnabled, clusterMaxZoom);
   }
 
-  public static fitCameraToPoints(map: atlas.Map | null, points: IMapPoint[]): void {
-    if (!map || points.length === 0) {
+  // Maker-configured fallback camera, used only when the dataset has no points.
+  // Center requires both coordinates; zoom applies independently. Out-of-range
+  // values are ignored so a typo cannot fling the camera somewhere invalid.
+  public static getDefaultCamera(
+    defaultLatitude?: number,
+    defaultLongitude?: number,
+    defaultZoom?: number
+  ): { center?: atlas.data.Position; zoom?: number } | undefined {
+    const camera: { center?: atlas.data.Position; zoom?: number } = {};
+    if (
+      typeof defaultLatitude === 'number' && Math.abs(defaultLatitude) <= 90
+      && typeof defaultLongitude === 'number' && Math.abs(defaultLongitude) <= 180
+    ) {
+      camera.center = [defaultLongitude, defaultLatitude];
+    }
+    if (typeof defaultZoom === 'number' && defaultZoom >= 0 && defaultZoom <= 24) {
+      camera.zoom = defaultZoom;
+    }
+    return camera.center || camera.zoom !== undefined ? camera : undefined;
+  }
+
+  public static fitCameraToPoints(
+    map: atlas.Map | null,
+    points: IMapPoint[],
+    emptyFallback?: { center?: atlas.data.Position; zoom?: number }
+  ): void {
+    if (!map) {
+      return;
+    }
+
+    if (points.length === 0) {
+      if (emptyFallback) {
+        map.setCamera({ ...emptyFallback, type: 'ease' });
+      }
       return;
     }
 
@@ -450,7 +513,7 @@ function MapControls(props: MapControlsProps): React.ReactElement {
       {props.showAddControl && (
       <button
         type="button"
-        aria-label="Add point"
+        aria-label="Add/Update Point"
         aria-pressed={props.isAddModeActive}
         onClick={props.onToggleAddMode}
         onMouseEnter={props.onAddControlMouseEnter}
@@ -479,7 +542,7 @@ function MapControls(props: MapControlsProps): React.ReactElement {
           />
         </svg>
         {props.isAddControlHovered && (
-          <span>{props.isAddModeActive ? 'Click map to add' : 'Add point'}</span>
+          <span>{props.isAddModeActive ? 'Click map to add/update' : 'Add/Update Point'}</span>
         )}
       </button>
       )}
@@ -624,6 +687,10 @@ export class AzMapPCF extends React.Component<IAzMapPCFProps> {
   // the Web SDK does NOT send it for authType 'sas', so atlas returns 401 InvalidClientId
   // unless we inject it ourselves via transformRequest.
   private azureMapsClientId: string | undefined;
+  // Runtime-generated pin sprites for per-record colors. Sprite images live on the
+  // map instance, so both sets reset in disposeMap.
+  private customPinImageIds = new Set<string>();
+  private pendingPinImageIds = new Set<string>();
   private styleMenuCloseTimeoutId: number | undefined;
   private searchQuery = '';
   private searchResults: SearchResult[] = [];
@@ -680,6 +747,14 @@ export class AzMapPCF extends React.Component<IAzMapPCFProps> {
       || prevProps.mapDomain !== this.props.mapDomain
     ) {
       this.disposeMap();
+      // A prior runtime error replaces the whole control (map container included) with the
+      // error label, so the container div is not in the DOM until the error is cleared and
+      // React re-renders — initializeMap would silently no-op. Clear first, init after render.
+      if (this.runtimeErrorMessage) {
+        this.runtimeErrorMessage = undefined;
+        this.forceUpdate(() => this.initializeMap());
+        return;
+      }
       this.initializeMap();
     }
   }
@@ -717,14 +792,41 @@ export class AzMapPCF extends React.Component<IAzMapPCFProps> {
     }
   }
 
+  // updateView rebuilds the points array on every host callback (including output-only
+  // ones like the add-point signal), so reference inequality alone does not mean the data
+  // changed. Camera moves must key off content — otherwise clicking Add Point pans the
+  // map back to the selected record's old coordinates before the Patch lands.
+  private static arePointListsEqual(a: IMapPoint[], b: IMapPoint[]): boolean {
+    if (a.length !== b.length) {
+      return false;
+    }
+    for (let i = 0; i < a.length; i++) {
+      if (
+        a[i].id !== b[i].id
+        || a[i].latitude !== b[i].latitude
+        || a[i].longitude !== b[i].longitude
+        || a[i].title !== b[i].title
+        || a[i].color !== b[i].color
+      ) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   private syncPoints(prevProps: IAzMapPCFProps): void {
-    if (prevProps.points !== this.props.points) {
+    if (
+      prevProps.points !== this.props.points
+      && !AzMapPCF.arePointListsEqual(prevProps.points ?? [], this.props.points ?? [])
+    ) {
       this.renderPoints();
-      if (this.selectedPointId) {
-        MapCameraHelpers.centerOnSelectedPoint(
+      // Branch on whether the selection resolves to a real point, not just whether an
+      // id is set — a stale selection would otherwise no-op here and never auto-fit.
+      const selectedPoint = MapCameraHelpers.getPointById(this.props.points ?? [], this.selectedPointId);
+      if (selectedPoint) {
+        MapCameraHelpers.centerOnPoint(
           this.map,
-          this.props.points ?? [],
-          this.selectedPointId,
+          selectedPoint,
           this.clusteringEnabled,
           this.clusterMaxZoom
         );
@@ -912,14 +1014,26 @@ export class AzMapPCF extends React.Component<IAzMapPCFProps> {
 
   // Selection and camera methods
   private autoFitToDataIfApplicable(): void {
-    if (MapCameraHelpers.shouldSkipAutoFit(this.skipAutoFitOnNextRender, this.selectedPointId)) {
+    // A selection only blocks auto-fit if it resolves to a real point — a stale
+    // activeRecordId pointing at a record that is no longer in the dataset must not
+    // freeze the camera (e.g. switching to a project whose dataset is empty).
+    const resolvedSelectedPointId = MapCameraHelpers.getPointById(this.props.points ?? [], this.selectedPointId)?.id;
+    if (MapCameraHelpers.shouldSkipAutoFit(this.skipAutoFitOnNextRender, resolvedSelectedPointId)) {
       if (this.skipAutoFitOnNextRender) {
         this.skipAutoFitOnNextRender = false;
       }
       return;
     }
 
-    MapCameraHelpers.fitCameraToPoints(this.map, this.props.points ?? []);
+    MapCameraHelpers.fitCameraToPoints(this.map, this.props.points ?? [], this.getDefaultCamera());
+  }
+
+  private getDefaultCamera(): { center?: atlas.data.Position; zoom?: number } | undefined {
+    return MapCameraHelpers.getDefaultCamera(
+      this.props.defaultLatitude,
+      this.props.defaultLongitude,
+      this.props.defaultZoom
+    );
   }
 
   private onZoomIn = (): void => {
@@ -934,7 +1048,7 @@ export class AzMapPCF extends React.Component<IAzMapPCFProps> {
     this.isClusterFlyoutOpen = false;
     this.clusterFlyoutPoints = [];
     this.clusterFlyoutAnchor = undefined;
-    MapCameraHelpers.fitCameraToPoints(this.map, this.props.points ?? []);
+    MapCameraHelpers.fitCameraToPoints(this.map, this.props.points ?? [], this.getDefaultCamera());
     this.forceUpdate();
   };
 
@@ -1110,8 +1224,9 @@ export class AzMapPCF extends React.Component<IAzMapPCFProps> {
       return;
     }
 
-    const center = cameraSnapshot?.center ?? [-77.0369, 38.9072];
-    const zoom = cameraSnapshot?.zoom ?? 5;
+    const defaultCamera = this.getDefaultCamera();
+    const center = cameraSnapshot?.center ?? defaultCamera?.center ?? [-77.0369, 38.9072];
+    const zoom = cameraSnapshot?.zoom ?? defaultCamera?.zoom ?? 5;
     const style = this.selectedStyle;
     const mapDomain = MapValueHelpers.getValidatedMapDomain(this.props.mapDomain);
     this.skipAutoFitOnNextRender = !!cameraSnapshot;
@@ -1209,14 +1324,15 @@ export class AzMapPCF extends React.Component<IAzMapPCFProps> {
       const pointLayer = new atlas.layer.SymbolLayer(this.datasource, undefined, {
         filter: this.clusteringEnabled ? ['!', ['has', 'point_count']] : undefined,
         iconOptions: {
-          image: ['case', ['boolean', ['get', 'isSelected'], false], 'pin-round-red', 'pin-round-darkblue'],
+          image: [
+            'case',
+            ['boolean', ['get', 'isSelected'], false],
+            ['string', ['get', 'selectedPinImage']],
+            ['string', ['get', 'pinImage']]
+          ],
           anchor: 'bottom',
           offset: [0, -2],
           allowOverlap: true
-        },
-        textOptions: {
-          textField: ['get', 'title'],
-          anchor: 'top'
         }
       });
 
@@ -1227,8 +1343,8 @@ export class AzMapPCF extends React.Component<IAzMapPCFProps> {
           color: [
             'case',
             ['>', ['get', 'selectedCount'], 0],
-            '#c62828',
-            ['step', ['get', 'point_count'], '#4f83cc', 20, '#2f6ab3', 100, '#204d88', 500, '#13335d']
+            CLUSTER_WITH_SELECTED_COLOR,
+            CLUSTER_COLOR
           ],
           strokeColor: '#ffffff',
           strokeWidth: 1
@@ -1236,6 +1352,11 @@ export class AzMapPCF extends React.Component<IAzMapPCFProps> {
 
         const clusterCountLayer = new atlas.layer.SymbolLayer(this.datasource, undefined, {
           filter: ['has', 'point_count'],
+          iconOptions: {
+            // Symbol layers render a default blue marker when no image is set —
+            // this layer is text-only (the count inside the cluster bubble).
+            image: 'none'
+          },
           textOptions: {
             textField: ['get', 'point_count_abbreviated'],
             color: '#ffffff',
@@ -1367,16 +1488,87 @@ export class AzMapPCF extends React.Component<IAzMapPCFProps> {
       return;
     }
 
+    this.ensureCustomPinImages(points);
+
     const features = points.map((point) => new atlas.data.Feature(
       new atlas.data.Point([point.longitude, point.latitude]),
       {
         title: point.title,
         id: point.id,
-        isSelected: this.selectedPointId === point.id
+        isSelected: this.selectedPointId === point.id,
+        pinImage: this.getPinImageId(point),
+        selectedPinImage: this.getSelectedPinImageId()
       }
     ));
 
     this.datasource.add(features);
+  }
+
+  private static toPinImageId(color: string): string {
+    return `pin-custom-${color.replace(/[^a-z0-9]/g, '')}`;
+  }
+
+  // Brand default (coral) and selected (bright coral) pins are generated sprites too;
+  // until they land the built-in pins stand in, then renderPoints re-runs and swaps them.
+  private getPinImageId(point: IMapPoint): string {
+    const requestedColor = point.color ?? DEFAULT_PIN_COLOR;
+    const imageId = AzMapPCF.toPinImageId(requestedColor);
+    if (this.customPinImageIds.has(imageId)) {
+      return imageId;
+    }
+    return 'pin-round-darkblue';
+  }
+
+  private getSelectedPinImageId(): string {
+    const imageId = AzMapPCF.toPinImageId(SELECTED_PIN_COLOR);
+    return this.customPinImageIds.has(imageId) ? imageId : 'pin-round-red';
+  }
+
+  // Sprite creation is async, so the first render with a new color falls back to the
+  // default pin and renderPoints re-runs once the sprite lands. Failed creations
+  // (invalid color) are dropped silently — those pins just keep the default look.
+  private ensureCustomPinImages(points: IMapPoint[]): void {
+    const map = this.map;
+    if (!map) {
+      return;
+    }
+
+    const wantedColors = new Set<string>([DEFAULT_PIN_COLOR, SELECTED_PIN_COLOR]);
+    for (const point of points) {
+      if (point.color) {
+        wantedColors.add(point.color);
+      }
+    }
+
+    const creations: Promise<void>[] = [];
+    for (const color of wantedColors) {
+      const imageId = AzMapPCF.toPinImageId(color);
+      if (this.customPinImageIds.has(imageId) || this.pendingPinImageIds.has(imageId)) {
+        continue;
+      }
+      this.pendingPinImageIds.add(imageId);
+      creations.push(this.createPinImage(map, imageId, color));
+    }
+
+    if (creations.length > 0) {
+      void (async (): Promise<void> => {
+        await Promise.all(creations);
+        if (this.map === map) {
+          this.renderPoints();
+        }
+      })();
+    }
+  }
+
+  private async createPinImage(map: atlas.Map, imageId: string, color: string): Promise<void> {
+    try {
+      await map.imageSprite.createFromTemplate(imageId, 'pin-round', color, '#ffffff');
+      this.customPinImageIds.add(imageId);
+    } catch (error) {
+      console.warn(`[AzMapPCF] Could not create pin image for color "${color}":`, error);
+    } finally {
+      this.pendingPinImageIds.delete(imageId);
+    }
   }
 
   private disposeMap(): void {
@@ -1386,8 +1578,10 @@ export class AzMapPCF extends React.Component<IAzMapPCFProps> {
     }
 
     this.datasource = null;
-    // map.dispose() tears down its markers; just drop our reference.
+    // map.dispose() tears down its markers and sprite images; drop our references.
     this.searchMarker = null;
+    this.customPinImageIds.clear();
+    this.pendingPinImageIds.clear();
   }
 
   // Location search (Azure Maps Fuzzy Search) — reuses the control's existing auth.
@@ -1440,13 +1634,46 @@ export class AzMapPCF extends React.Component<IAzMapPCFProps> {
   }
 
   private async fetchFuzzySearchResults(query: string): Promise<SearchResult[]> {
+    const countrySet = this.props.searchCountrySet?.trim() ?? '';
+    const trimmedQuery = query.trim();
+
+    // A query that IS a US state (name or abbreviation) needs a targeted lookup:
+    // plain fuzzy search ranks same-named towns above the state itself (e.g.
+    // "Maryland" -> Maryland NY/IL/ND, state nowhere in the list). Restricting to
+    // CountrySubdivision geographies returns the actual state, framed by viewport.
+    if (countrySet.toLowerCase().split(',').map((code) => code.trim()).includes('us')) {
+      const normalized = trimmedQuery.toLowerCase();
+      const stateName = US_STATE_ABBREVIATIONS[normalized]
+        ?? Object.values(US_STATE_ABBREVIATIONS).find((name) => name.toLowerCase() === normalized);
+      if (stateName) {
+        const stateResults = await this.performFuzzySearch(stateName, countrySet, 'CountrySubdivision');
+        if (stateResults.length > 0) {
+          return stateResults;
+        }
+      }
+    }
+
+    return this.performFuzzySearch(trimmedQuery, countrySet);
+  }
+
+  private async performFuzzySearch(
+    query: string,
+    countrySet: string,
+    entityType?: string
+  ): Promise<SearchResult[]> {
     const domain = MapValueHelpers.getValidatedMapDomain(this.props.mapDomain);
     const params = new URLSearchParams({
       'api-version': '1.0',
       query,
-      limit: '5',
+      limit: '8',
       language: 'en-US'
     });
+    if (countrySet.length > 0) {
+      params.set('countrySet', countrySet);
+    }
+    if (entityType) {
+      params.set('entityType', entityType);
+    }
     const headers: Record<string, string> = { Accept: 'application/json' };
 
     if (this.props.subscriptionKey) {
@@ -1488,6 +1715,10 @@ export class AzMapPCF extends React.Component<IAzMapPCFProps> {
         position?: { lat?: unknown; lon?: unknown };
         address?: { freeformAddress?: unknown };
         poi?: { name?: unknown };
+        viewport?: {
+          topLeftPoint?: { lat?: unknown; lon?: unknown };
+          btmRightPoint?: { lat?: unknown; lon?: unknown };
+        };
       };
 
       const latitude = candidate.position?.lat;
@@ -1504,7 +1735,14 @@ export class AzMapPCF extends React.Component<IAzMapPCFProps> {
       const detail = poiName && freeformAddress ? freeformAddress : '';
       const id = typeof candidate.id === 'string' && candidate.id.length > 0 ? candidate.id : `result-${index}`;
 
-      results.push({ id, label, detail, position: [longitude, latitude] });
+      const topLeft = candidate.viewport?.topLeftPoint;
+      const btmRight = candidate.viewport?.btmRightPoint;
+      const bounds = typeof topLeft?.lat === 'number' && typeof topLeft?.lon === 'number'
+        && typeof btmRight?.lat === 'number' && typeof btmRight?.lon === 'number'
+        ? [topLeft.lon, btmRight.lat, btmRight.lon, topLeft.lat] as atlas.data.BoundingBox
+        : undefined;
+
+      results.push({ id, label, detail, position: [longitude, latitude], bounds });
     });
 
     return results;
@@ -1512,7 +1750,13 @@ export class AzMapPCF extends React.Component<IAzMapPCFProps> {
 
   private onSearchResultSelected = (result: SearchResult): void => {
     if (this.map) {
-      this.map.setCamera({ center: result.position, zoom: 13, type: 'ease' });
+      // Area results (states, cities) carry a viewport — frame the whole area
+      // instead of dropping to street level at its center point.
+      if (result.bounds) {
+        this.map.setCamera({ bounds: result.bounds, padding: 40, type: 'ease' });
+      } else {
+        this.map.setCamera({ center: result.position, zoom: 13, type: 'ease' });
+      }
     }
 
     this.showSearchMarker(result.position);
@@ -1713,7 +1957,7 @@ export class AzMapPCF extends React.Component<IAzMapPCFProps> {
       >
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
           <span style={{ fontSize: 12, fontWeight: 600 }}>
-            Select a document ({this.clusterFlyoutPoints.length})
+            Select a project ({this.clusterFlyoutPoints.length})
           </span>
           <button
             type="button"

@@ -1,6 +1,6 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <manifest>
-  <control namespace="gb" constructor="mapPCF" version="1.0.43" display-name-key="mapPCF" description-key="mapPCF description" control-type="virtual">
+  <control namespace="gb" constructor="mapPCF" version="1.0.47" display-name-key="mapPCF" description-key="mapPCF description" control-type="virtual">
     <external-service-usage enabled="true">
       <domain>atlas.microsoft.com</domain>
       <domain>atlas.azure.us</domain>
@@ -9,7 +9,11 @@
     <property name="azureMapsAuthFunctionUrl" display-name-key="Azure Maps Auth Function URL" description-key="HTTP endpoint that returns an Azure Maps jwt-sas token payload." of-type="SingleLine.Text" usage="input" required="false" />
     <property name="mapDomain" display-name-key="Azure Maps Domain" description-key="Azure Maps domain host. Use atlas.microsoft.com (public cloud) or atlas.azure.us (Azure Government)." of-type="SingleLine.Text" usage="input" required="false" />
     <property name="mapStyle" display-name-key="Map Style" description-key="Azure Maps style name (for example: road, satellite, grayscale_dark)." of-type="SingleLine.Text" usage="input" required="false" />
+    <property name="defaultLatitude" display-name-key="Default Latitude" description-key="Latitude the camera falls back to when the dataset has no points (for example 39.8 for the continental US)." of-type="Decimal" usage="input" required="false" />
+    <property name="defaultLongitude" display-name-key="Default Longitude" description-key="Longitude the camera falls back to when the dataset has no points (for example -98.5 for the continental US)." of-type="Decimal" usage="input" required="false" />
+    <property name="defaultZoom" display-name-key="Default Zoom" description-key="Zoom level the camera falls back to when the dataset has no points (for example 4 for the continental US)." of-type="Whole.None" usage="input" required="false" />
     <property name="activeRecordId" display-name-key="Active Record Id" description-key="Input record id to highlight and center on the map." of-type="SingleLine.Text" usage="input" required="false" />
+    <property name="searchCountrySet" display-name-key="Search Country Set" description-key="Comma separated ISO country codes that limit the location search, for example US. When set to US, two letter state abbreviations are also recognized. Blank searches worldwide." of-type="SingleLine.Text" usage="input" required="false" />
     <property name="hideAddPoint" display-name-key="Hide Add Point" description-key="When true, hides the add-point control and disables click-to-add. Defaults to shown." of-type="TwoOptions" usage="input" required="false" />
     <property name="hideDeletePoint" display-name-key="Hide Delete Point" description-key="When true, hides the delete-selected-point control. Defaults to shown." of-type="TwoOptions" usage="input" required="false" />
     <property name="hideSearchBar" display-name-key="Hide Search Bar" description-key="When true, hides the location search box. Defaults to shown." of-type="TwoOptions" usage="input" required="false" />
@@ -29,6 +33,7 @@
       <property-set name="latitudeColumn" display-name-key="Latitude Column" description-key="Column that contains latitude values." of-type="Decimal" usage="bound" required="true" />
       <property-set name="longitudeColumn" display-name-key="Longitude Column" description-key="Column that contains longitude values." of-type="Decimal" usage="bound" required="true" />
       <property-set name="titleColumn" display-name-key="Title Column" description-key="Optional column used for the pin label and hover text." of-type="SingleLine.Text" usage="bound" required="false" />
+      <property-set name="colorColumn" display-name-key="Color Column" description-key="Optional column with a pin color as a hex value like #C62828 or a CSS color name like red. Blank or invalid values use the default blue pin." of-type="SingleLine.Text" usage="bound" required="false" />
     </data-set>
     <resources>
       <code path="index.ts" order="1" />

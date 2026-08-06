@@ -1,0 +1,53 @@
+AzureMapPCF v1.1.0.24 — App Setup Checklist
+=============================================
+(Solution 1.1.0.24 / control 1.0.47)
+
+STEP 1 — IMPORT
+  Maker portal > Solutions > Import solution > AzureMapPCF_1-1-0-24.zip
+  (import as upgrade over the existing version)
+
+STEP 2 — UPDATE THE COMPONENT IN THE APP
+  Open the app in the designer. When prompted that a newer version of the
+  code component is available, accept the update. Save + publish when done
+  with the steps below.
+
+STEP 3 — REQUIRED PROPERTY VALUES (set once on the map control)
+  Default Latitude ....... 39.8
+  Default Longitude ...... -98.5
+  Default Zoom ........... 4
+      -> Camera view used ONLY when a project has no points
+         (continental US view). Projects with points still zoom
+         to their points like before.
+
+  Search Country Set ..... US
+      -> Fixes state searches: "maryland" or "md" now returns the
+         actual state and frames it. Leave blank = old worldwide
+         search behavior.
+
+STEP 4 — OPTIONAL: PER-PROJECT PIN COLORS
+  Skip this step entirely and every pin stays the default blue.
+
+  a) Add a color to the dataset in the Items formula, e.g.:
+       AddColumns(
+           <your existing Items expression>,
+           PinColor,
+           If(ThisRecord.HasX, "#C62828", "#2F6AB3")
+       )
+     Accepted values: hex like #C62828, or CSS names like red, green.
+     Blank/invalid values fall back to the default blue pin.
+
+  b) In the control's field mappings, point the new optional
+     "Color Column" at PinColor.
+
+  Note: the selected pin always shows red while selected, then
+  returns to its record color.
+
+NO ACTION NEEDED (behavior changes that just work after import)
+  - Pin labels no longer permanently shown; project name on hover only
+  - Add-point button now reads "Add/Update Point"
+  - Adding/updating a point no longer pans back to the old location
+  - Records with blank coordinates are skipped (no more stray pin
+    in the ocean at 0,0)
+  - Cluster popup now titled "Select a project"
+  - Map errors show a message and recover when the cause is fixed,
+    instead of leaving a permanently blank map
