@@ -49,6 +49,13 @@ interface SearchResult {
   bounds?: atlas.data.BoundingBox;
 }
 
+// Fisheries coral palette (client brand): single points coral, clusters dark coral,
+// selection bright coral so it stays visible inside an all-coral scheme.
+const DEFAULT_PIN_COLOR = '#b71300';           // Coral
+const SELECTED_PIN_COLOR = '#ff6c57';          // Bright Coral
+const CLUSTER_COLOR = '#901200';               // Dark Coral
+const CLUSTER_WITH_SELECTED_COLOR = '#ff6c57'; // Bright Coral
+
 // Full state names rank as Geography results; bare abbreviations mostly match
 // unrelated POIs worldwide, so expand them before querying (US searches only).
 const US_STATE_ABBREVIATIONS: Record<string, string> = {
@@ -1320,7 +1327,7 @@ export class AzMapPCF extends React.Component<IAzMapPCFProps> {
           image: [
             'case',
             ['boolean', ['get', 'isSelected'], false],
-            'pin-round-red',
+            ['string', ['get', 'selectedPinImage']],
             ['string', ['get', 'pinImage']]
           ],
           anchor: 'bottom',
@@ -1336,8 +1343,8 @@ export class AzMapPCF extends React.Component<IAzMapPCFProps> {
           color: [
             'case',
             ['>', ['get', 'selectedCount'], 0],
-            '#c62828',
-            ['step', ['get', 'point_count'], '#4f83cc', 20, '#2f6ab3', 100, '#204d88', 500, '#13335d']
+            CLUSTER_WITH_SELECTED_COLOR,
+            CLUSTER_COLOR
           ],
           strokeColor: '#ffffff',
           strokeWidth: 1
@@ -1484,7 +1491,8 @@ export class AzMapPCF extends React.Component<IAzMapPCFProps> {
         title: point.title,
         id: point.id,
         isSelected: this.selectedPointId === point.id,
-        pinImage: this.getPinImageId(point)
+        pinImage: this.getPinImageId(point),
+        selectedPinImage: this.getSelectedPinImageId()
       }
     ));
 
@@ -1495,14 +1503,20 @@ export class AzMapPCF extends React.Component<IAzMapPCFProps> {
     return `pin-custom-${color.replace(/[^a-z0-9]/g, '')}`;
   }
 
+  // Brand default (coral) and selected (bright coral) pins are generated sprites too;
+  // until they land the built-in pins stand in, then renderPoints re-runs and swaps them.
   private getPinImageId(point: IMapPoint): string {
-    if (point.color) {
-      const imageId = AzMapPCF.toPinImageId(point.color);
-      if (this.customPinImageIds.has(imageId)) {
-        return imageId;
-      }
+    const requestedColor = point.color ?? DEFAULT_PIN_COLOR;
+    const imageId = AzMapPCF.toPinImageId(requestedColor);
+    if (this.customPinImageIds.has(imageId)) {
+      return imageId;
     }
     return 'pin-round-darkblue';
+  }
+
+  private getSelectedPinImageId(): string {
+    const imageId = AzMapPCF.toPinImageId(SELECTED_PIN_COLOR);
+    return this.customPinImageIds.has(imageId) ? imageId : 'pin-round-red';
   }
 
   // Sprite creation is async, so the first render with a new color falls back to the
@@ -1514,17 +1528,21 @@ export class AzMapPCF extends React.Component<IAzMapPCFProps> {
       return;
     }
 
-    const creations: Promise<void>[] = [];
+    const wantedColors = new Set<string>([DEFAULT_PIN_COLOR, SELECTED_PIN_COLOR]);
     for (const point of points) {
-      if (!point.color) {
-        continue;
+      if (point.color) {
+        wantedColors.add(point.color);
       }
-      const imageId = AzMapPCF.toPinImageId(point.color);
+    }
+
+    const creations: Promise<void>[] = [];
+    for (const color of wantedColors) {
+      const imageId = AzMapPCF.toPinImageId(color);
       if (this.customPinImageIds.has(imageId) || this.pendingPinImageIds.has(imageId)) {
         continue;
       }
       this.pendingPinImageIds.add(imageId);
-      creations.push(this.createPinImage(map, imageId, point.color));
+      creations.push(this.createPinImage(map, imageId, color));
     }
 
     if (creations.length > 0) {
