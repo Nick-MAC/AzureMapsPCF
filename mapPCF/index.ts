@@ -23,6 +23,7 @@ export class mapPCF implements ComponentFramework.ReactControl<IInputs, IOutputs
     private readonly latitudePropertySetName = "latitudeColumn";
     private readonly longitudePropertySetName = "longitudeColumn";
     private readonly titlePropertySetName = "titleColumn";
+    private readonly colorPropertySetName = "colorColumn";
 
     public init(
         context: ComponentFramework.Context<IInputs>,
@@ -53,7 +54,8 @@ export class mapPCF implements ComponentFramework.ReactControl<IInputs, IOutputs
             recordId: this.recordIdPropertySetName,
             latitude: this.latitudePropertySetName,
             longitude: this.longitudePropertySetName,
-            title: this.titlePropertySetName
+            title: this.titlePropertySetName,
+            color: this.colorPropertySetName
         });
 
         const mapStyle = MapPcfHelpers.toNonEmptyTrimmed(context.parameters?.mapStyle?.raw);
@@ -61,6 +63,10 @@ export class mapPCF implements ComponentFramework.ReactControl<IInputs, IOutputs
         const subscriptionKey = MapPcfHelpers.sanitizeSubscriptionKey(context.parameters?.subscriptionKey?.raw);
         const azureMapsAuthFunctionUrl = MapPcfHelpers.sanitizeUrl(context.parameters?.azureMapsAuthFunctionUrl?.raw);
         const mapDomain = MapPcfHelpers.sanitizeMapDomain(context.parameters?.mapDomain?.raw);
+        const defaultLatitude = MapPcfHelpers.toNumber(context.parameters?.defaultLatitude?.raw);
+        const defaultLongitude = MapPcfHelpers.toNumber(context.parameters?.defaultLongitude?.raw);
+        const defaultZoom = MapPcfHelpers.toNumber(context.parameters?.defaultZoom?.raw);
+        const searchCountrySet = MapPcfHelpers.sanitizeCountrySet(context.parameters?.searchCountrySet?.raw);
         const authConfigurationError = MapPcfHelpers.getAuthConfigurationError(subscriptionKey, azureMapsAuthFunctionUrl);
 
         // Feature-visibility flags. TwoOptions inputs default to false when unset, so
@@ -82,6 +88,10 @@ export class mapPCF implements ComponentFramework.ReactControl<IInputs, IOutputs
             allocatedWidth,
             allocatedHeight,
             mapStyle,
+            defaultLatitude,
+            defaultLongitude,
+            defaultZoom,
+            searchCountrySet,
             activeRecordId,
             authConfigurationError,
             points,
@@ -375,6 +385,7 @@ class MapPcfHelpers {
             latitude: string;
             longitude: string;
             title: string;
+            color: string;
         }
     ): IMapPoint[] {
         if (!dataSet?.records) {
@@ -392,6 +403,7 @@ class MapPcfHelpers {
             latitude: string;
             longitude: string;
             title: string;
+            color: string;
         }
     ): IMapPoint[] {
         if (recordIds.length === 0) {
@@ -418,24 +430,58 @@ class MapPcfHelpers {
             const mappedRecordId = this.getTextValue(record, columns.recordId);
             const outputRecordId = this.toNonEmptyTrimmed(mappedRecordId) ?? recordId;
 
+            const color = this.sanitizePinColor(this.getTextValue(record, columns.color));
+
             points.push({
                 id: outputRecordId,
                 latitude,
                 longitude,
-                title
+                title,
+                color
             });
         }
 
         return points;
     }
 
-    private static toNumber(value: unknown): number | undefined {
+    // countrySet is a comma separated list of ISO 3166-1 alpha-2 codes (e.g. "US" or
+    // "US,CA"). Anything else is dropped rather than passed to the search API.
+    public static sanitizeCountrySet(value: string | null | undefined): string | undefined {
+        const trimmed = value?.trim();
+        if (!trimmed) {
+            return undefined;
+        }
+        const codes = trimmed.split(",").map((code) => code.trim()).filter((code) => code.length > 0);
+        return codes.length > 0 && codes.every((code) => /^[A-Za-z]{2}$/.test(code))
+            ? codes.map((code) => code.toUpperCase()).join(",")
+            : undefined;
+    }
+
+    // Pin colors feed image-template generation, so only accept values that are
+    // unambiguously colors: #RGB/#RRGGBB hex or a plain CSS color name.
+    public static sanitizePinColor(value: string | undefined): string | undefined {
+        const trimmed = value?.trim().toLowerCase();
+        if (!trimmed) {
+            return undefined;
+        }
+        return /^#([0-9a-f]{3}|[0-9a-f]{6})$/.test(trimmed) || /^[a-z]{3,25}$/.test(trimmed)
+            ? trimmed
+            : undefined;
+    }
+
+    public static toNumber(value: unknown): number | undefined {
         if (typeof value === "number" && Number.isFinite(value)) {
             return value;
         }
 
         if (typeof value === "string") {
-            const parsedValue = Number(value);
+            // Number("") and Number("   ") are 0, which would turn a record with
+            // blank coordinates into a phantom pin at (0, 0) instead of skipping it.
+            const trimmed = value.trim();
+            if (trimmed.length === 0) {
+                return undefined;
+            }
+            const parsedValue = Number(trimmed);
             if (Number.isFinite(parsedValue)) {
                 return parsedValue;
             }
