@@ -1336,6 +1336,11 @@ export class AzMapPCF extends React.Component<IAzMapPCFProps> {
         }
       });
 
+      const popup = new atlas.Popup({
+        closeButton: false,
+        pixelOffset: [0, -18]
+      });
+
       if (this.clusteringEnabled) {
         const clusterBubbleLayer = new atlas.layer.BubbleLayer(this.datasource, undefined, {
           filter: ['has', 'point_count'],
@@ -1367,42 +1372,41 @@ export class AzMapPCF extends React.Component<IAzMapPCFProps> {
         this.map.layers.add([clusterBubbleLayer, clusterCountLayer, pointLayer]);
         this.map.events.add('click', clusterBubbleLayer, this.onClusterClicked);
         this.map.events.add('click', clusterCountLayer, this.onClusterClicked);
-        this.map.events.add('mouseover', clusterBubbleLayer, () => {
-          if (!this.map) {
+        // Hover cue so users know a cluster hides a list: tooltip + pointer cursor.
+        const showClusterTooltip = (event: atlas.MapMouseEvent): void => {
+          if (!this.map || !event.shapes || event.shapes.length === 0) {
             return;
           }
 
+          const properties = MapShapeReaders.getShapeProperties(event.shapes[0]);
+          const pointCountValue = properties.point_count;
+          const pointCount = typeof pointCountValue === 'number' ? pointCountValue : 0;
+          const position = MapShapeReaders.getShapePosition(event.shapes[0]);
+          if (pointCount <= 0 || !position) {
+            return;
+          }
+
+          popup.setOptions({
+            content: `<div style="padding:8px 10px; font-size:12px;">${pointCount} projects — click to view the list</div>`,
+            position
+          });
+          popup.open(this.map);
           this.map.getCanvasContainer().style.cursor = 'pointer';
-        });
-        this.map.events.add('mouseover', clusterCountLayer, () => {
-          if (!this.map) {
-            return;
+        };
+        const hideClusterTooltip = (): void => {
+          popup.close();
+          if (this.map) {
+            this.map.getCanvasContainer().style.cursor = '';
           }
+        };
 
-          this.map.getCanvasContainer().style.cursor = 'pointer';
-        });
-        this.map.events.add('mouseout', clusterBubbleLayer, () => {
-          if (!this.map) {
-            return;
-          }
-
-          this.map.getCanvasContainer().style.cursor = '';
-        });
-        this.map.events.add('mouseout', clusterCountLayer, () => {
-          if (!this.map) {
-            return;
-          }
-
-          this.map.getCanvasContainer().style.cursor = '';
-        });
+        this.map.events.add('mouseover', clusterBubbleLayer, showClusterTooltip);
+        this.map.events.add('mouseover', clusterCountLayer, showClusterTooltip);
+        this.map.events.add('mouseout', clusterBubbleLayer, hideClusterTooltip);
+        this.map.events.add('mouseout', clusterCountLayer, hideClusterTooltip);
       } else {
         this.map.layers.add(pointLayer);
       }
-
-      const popup = new atlas.Popup({
-        closeButton: false,
-        pixelOffset: [0, -18]
-      });
 
       this.map.events.add('mouseover', pointLayer, (event: atlas.MapMouseEvent) => {
         if (!this.map || !event.shapes || event.shapes.length === 0 || this.isAddModeActive) {

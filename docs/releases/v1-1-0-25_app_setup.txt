@@ -1,9 +1,9 @@
-AzureMapPCF v1.1.0.24 — App Setup Checklist
+AzureMapPCF v1.1.0.25 — App Setup Checklist
 =============================================
-(Solution 1.1.0.24 / control 1.0.47)
+(Solution 1.1.0.25 / control 1.0.48)
 
 STEP 1 — IMPORT
-  Maker portal > Solutions > Import solution > AzureMapPCF_1-1-0-24.zip
+  Maker portal > Solutions > Import solution > AzureMapPCF_1-1-0-25.zip
   (import as upgrade over the existing version)
 
 STEP 2 — UPDATE THE COMPONENT IN THE APP
